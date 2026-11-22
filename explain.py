@@ -2,6 +2,8 @@
 
 python3 explain.py Haaland              projection breakdown for the next 6 gameweeks
 python3 explain.py "B.Fernandes" --horizon 4
+python3 explain.py Haaland --team 1234567     also: what he's worth to your team (the best plan
+                                              with him vs. the best plan without him)
 
 Shows his actual output this season and last, what the model takes from it (chance to start,
 per-90 rates), his team's attack/defence ratings (with and without last season's matches), each
@@ -13,6 +15,8 @@ import pandas as pd
 
 import data
 import model
+import optimizer
+import team as team_module
 
 PARTS = ["appearance", "goals", "assists", "clean_sheet", "conceded", "save_pts", "defcon", "bonus_pts", "cards",
          "pen_miss"]
@@ -49,7 +53,28 @@ def team_lines(history, season, team_code, as_of):
     return lines
 
 
-def explain(name, horizon=6):
+def worth_to_team(team_id, pid, per_gw, players, ft=None):
+    """For a player you don't own: the best plan for your squad with him available vs. never buying him."""
+    mine = team_module.load(team_id, players)
+    if ft is not None:
+        mine.free_transfers = ft
+    if pid in mine.squad:
+        return ["(He's already in your squad.)"]
+    args = (per_gw, players, mine.squad, mine.bank, mine.free_transfers, mine.sell_prices)
+    best = optimizer.plan(*args)
+    without = optimizer.plan(*args, optimizer.Settings(banned={pid}))
+    name = players.set_index("id")["web_name"]
+    moves = lambda plan: "; ".join(
+        f"GW{w.gw}: " + ", ".join(f"{name[o]} -> {name[i]}" for o, i in zip(w.transfers_out, w.transfers_in))
+        for w in plan.weeks if w.transfers_in) or "no transfers"
+    return [f"WHAT HE'S WORTH TO {mine.name.upper()} (bank £{mine.bank:.1f}m, {mine.free_transfers} free transfers)",
+            f"  best plan: {best.objective:.1f} expected points over {per_gw.shape[1]} GWs (discounted, after hits)",
+            f"    {moves(best)}",
+            f"  never buying him: {without.objective:.1f}  ->  he adds {best.objective - without.objective:+.1f}",
+            f"    {moves(without)}"]
+
+
+def explain(name, horizon=6, team_id=None, ft=None):
     season = data.load_live()
     history = data.load_with_prior(season)
     now = pd.Timestamp.now(tz="UTC")
@@ -102,6 +127,8 @@ def explain(name, horizon=6):
     top = table.nlargest(8, "xp")
     out += ["", f"OTHER {p.position}s, next {len(gws)} GWs (expected points, per £m)"]
     out += [f"  {r.name:<16} £{r.price:>4.1f} {r.xp:>6.1f} {r.per_m:>6.2f}" for r in top.itertuples()]
+    if team_id:
+        out += [""] + worth_to_team(team_id, p.id, per_gw, players, ft)
     return "\n".join(out)
 
 
@@ -109,5 +136,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("player")
     parser.add_argument("--horizon", type=int, default=6)
+    parser.add_argument("--team", type=int, help="your FPL team id: also show what he's worth to your team")
+    parser.add_argument("--ft", type=int, help="override the free-transfer count (public data can be off by one)")
     args = parser.parse_args()
-    print(explain(args.player, args.horizon))
+    print(explain(args.player, args.horizon, args.team, args.ft))

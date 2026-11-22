@@ -28,7 +28,9 @@ permissions:
   contents: write     # to save state (encrypted login, schedule, write log) to the bot-state branch
 
 concurrency:
-  group: fpl          # one run at a time: two runs would both try to renew the login
+  # One run at a time: two runs would both try to renew the login. Explain runs don't log in,
+  # so they run alongside (and can't knock a queued tick out of the queue).
+  group: ${{ inputs.job == 'explain' && format('explain-{0}', github.run_id) || 'fpl' }}
   cancel-in-progress: false
 
 jobs:
@@ -48,9 +50,10 @@ jobs:
         run: python -m pytest -q
       - name: Explain a projection
         if: inputs.job == 'explain'
-        run: python explain.py "$PLAYER"
+        run: python explain.py "$PLAYER" ${FPL_TEAM_ID:+--team "$FPL_TEAM_ID"}
         env:
           PLAYER: ${{ inputs.player }}
+          FPL_TEAM_ID: ${{ vars.FPL_TEAM_ID }}
       - name: Bot
         if: inputs.job != 'explain'
         run: bash hosted_run.sh --job "${JOB:-dry-run}" ${{ (github.event_name == 'workflow_dispatch' && inputs.job == 'dry-run' && inputs.email) && '--email' || '' }}
