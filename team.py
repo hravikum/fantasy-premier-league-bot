@@ -24,6 +24,7 @@ class Team:
     chips_used: list = field(default_factory=list)      # (chip, gameweek)
     picks: list = field(default_factory=list)           # the current lineup, when logged in
     transfers_open: bool = True                         # False while a Wildcard/Free Hit is active
+    active_chip: str | None = None                      # a chip already played for the coming gameweek
 
     def chips_available(self, gw):
         first, last = next(h for h in HALVES if h[0] <= gw <= h[1])
@@ -80,10 +81,15 @@ def load_private(token, players):
     picks = sorted(mine["picks"], key=lambda p: p["position"])
     transfers = mine["transfers"]
     limit = transfers.get("limit")
+    active = next((c.get("name") for c in mine.get("chips", []) if c.get("status_for_entry") == "active"), None)
+    if active is None and any(p["position"] > 11 and p.get("multiplier", 0) > 0 for p in picks):
+        active = "bboost"
+    elif active is None and any(p.get("multiplier") == 3 for p in picks):
+        active = "3xc"
     return Team(
         entry=entry, name=data.get(f"entry/{entry}/")["name"],
         squad=[p["element"] for p in picks], bank=transfers["bank"] / 10,
         free_transfers=0 if limit is None else min(max(limit - transfers.get("made", 0), 0), 5),
         sell_prices={p["element"]: p["selling_price"] / 10 for p in picks},
         chips_used=[(c["name"], c["event"]) for c in public["chips"]],
-        picks=picks, transfers_open=limit is not None)
+        picks=picks, transfers_open=limit is not None, active_chip=active)

@@ -18,7 +18,7 @@ def players_at(history, season, gw):
     return pd.DataFrame({
         "id": rows.element, "code": rows.code, "web_name": rows.element.astype(str),
         "position": rows.position, "team": rows.team, "price": rows.value / 10,
-        "status": "a", "chance": 100.0, "news": "",
+        "status": "a", "chance": 100.0, "news": "", "pen_order": rows.pen_order,
     })
 
 

@@ -150,6 +150,19 @@ def test_frozen_week_has_no_transfers():
     assert result.weeks[0].transfers_in == [] and result.weeks[0].hits == 0
 
 
+def test_forced_transfers_are_made_exactly():
+    players, xp = make_pool()
+    squad = cheapest_squad(players)
+    out = squad[5]
+    pos = players.set_index("id").loc[out, "position"]
+    clubs = Counter(players.set_index("id").loc[[p for p in squad if p != out], "team"])
+    target = players[(players.position == pos) & ~players.id.isin(squad)
+                     & players.team.map(lambda c: clubs[c] < 3)].iloc[-1]["id"]
+    week = optimizer.plan(xp, players, squad, 50.0, 0,
+                          settings=optimizer.Settings(forced={GWS[0]: ([target], [out])})).weeks[0]
+    assert week.transfers_in == [target] and week.transfers_out == [out] and week.hits == 1
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

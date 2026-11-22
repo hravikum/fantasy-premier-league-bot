@@ -75,3 +75,28 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
             print("ok", name)
+
+
+def test_live_start_ceiling():
+    history, players, cur, as_of = _project_gw("2026-27", 5)
+    plain, a = model.project(history, players, cur.fixtures, cur.teams, [5], as_of)
+    live, b = model.project(history, players, cur.fixtures, cur.teams, [5], as_of,
+                            model.Params(start_ceiling=model.LIVE_START_CEILING))
+    assert a.p_start.max() <= model.max_start(model.Params()) + 1e-9
+    for pos, ceiling in model.LIVE_START_CEILING.items():
+        assert b[b.position == pos].p_start.max() <= ceiling + 1e-9
+    assert (b.p_start >= a.p_start - 1e-9).all() and (live.sum().sum() > plain.sum().sum())
+
+
+def test_stand_in_inherits_penalties_when_the_taker_is_out():
+    history, players, cur, as_of = _project_gw("2026-27", 5)
+    listed = players.dropna(subset=["pen_order"])
+    team = listed.groupby("team").filter(lambda g: {1.0, 2.0} <= set(g.pen_order)).team.iloc[0]
+    first = listed[(listed.team == team) & (listed.pen_order == 1)].id.iloc[0]
+    second = listed[(listed.team == team) & (listed.pen_order == 2)].id.iloc[0]
+    _, before = model.project(history, players, cur.fixtures, cur.teams, [5], as_of)
+    players.loc[players.id == first, ["status", "chance", "news"]] = ["i", 0.0, "Unknown return date"]
+    _, after = model.project(history, players, cur.fixtures, cur.teams, [5], as_of)
+    take = lambda pf, pid: pf.loc[pf.id == pid, "p_taker"].sum()
+    assert take(before, first) > 0.5 and take(after, first) == 0
+    assert take(after, second) > take(before, second) + 0.3

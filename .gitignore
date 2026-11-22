@@ -3,3 +3,5 @@ cache/
 __pycache__/
 .venv/
 state/
+news.json
+heartbeat.json

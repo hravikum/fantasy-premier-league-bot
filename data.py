@@ -58,6 +58,8 @@ def _players(raw):
         "chance": pd.to_numeric(p["chance_of_playing_next_round"], errors="coerce"),
         "news": p["news"].fillna(""),
         "selected_by": pd.to_numeric(p["selected_by_percent"], errors="coerce"),
+        # FPL's set-piece order (1 = first choice); blank if not on the list
+        "pen_order": pd.to_numeric(p.get("penalties_order"), errors="coerce"),
     })
     out["chance"] = out["chance"].fillna(out["status"].eq("a") * 100.0)
     return out.dropna(subset=["position"]).reset_index(drop=True)
@@ -114,7 +116,9 @@ def load_archive(season):
     events = deadlines.rename("deadline_time").rename_axis("id").reset_index()
     events["id"] = events["id"].astype(int)
     events["finished"] = True
-    return Season(season, teams, _players(raw_players.to_dict("records")), fixtures, history, events)
+    players = _players(raw_players.to_dict("records"))
+    history["pen_order"] = history["element"].map(players.set_index("id")["pen_order"])
+    return Season(season, teams, players, fixtures, history, events)
 
 
 # ---------------------------------------------------------------- live API (current season)
@@ -124,6 +128,14 @@ def get(path, session=None, token=None, **kwargs):
     response = (session or requests).get(API + path, headers=headers, timeout=30, **kwargs)
     response.raise_for_status()
     return response.json()
+
+
+def post(path, token, payload):
+    """Send a change to FPL the way the website does. Returns the response; the caller checks it."""
+    headers = dict(HEADERS, **{"X-API-Authorization": f"Bearer {token}", "Content-Type": "application/json",
+                               "Origin": "https://fantasy.premierleague.com",
+                               "Referer": "https://fantasy.premierleague.com/"})
+    return requests.post(API + path, json=payload, headers=headers, timeout=30)
 
 
 def load_live():
@@ -162,6 +174,7 @@ def load_live():
     by_id = players.set_index("id")
     history["code"] = history["element"].map(by_id["code"])
     history["position"] = history["element"].map(by_id["position"])
+    history["pen_order"] = history["element"].map(by_id["pen_order"])
     return Season(name, teams, players, fixtures, history, events)
 
 

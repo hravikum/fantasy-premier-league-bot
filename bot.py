@@ -1,66 +1,448 @@
-"""One run of the bot: projections, the plan, the report, and what it would change on FPL.
+"""One run of the bot.
 
-python3 bot.py            dry run: the report plus the exact requests it would send (sends nothing)
-python3 bot.py --email    same, emailed
+python3 bot.py                     dry run: the report and what it would change (sends nothing)
+python3 bot.py --email             the same, emailed
+python3 bot.py --job tick          what cron-job.org starts every 30 minutes: runs the job that's due
+python3 bot.py --job preview|main|final    one of them now (doesn't touch the schedule)
+python3 bot.py --job check-write   re-save the current lineup unchanged: proves FPL accepts the bot's writes
 
-Logs in with the saved refresh token (auth.py) when it can. Without a login it falls back to
-public data for FPL_TEAM_ID, which shows the squad as of the last deadline.
+Jobs (schedule.py has the timing):
+  preview  ~24 h before the deadline: the plan, chip proposals, and one YES/NO question for anything
+           that needs your OK. Writes the watchlist for the Claude news check. Changes nothing.
+  main     ~2 h before: logs in, reads the news check and your reply, makes the changes, reads them
+           back from FPL and emails what it did. If anything fails: an ACTION NEEDED email.
+  final    ~45 min before: if the main run didn't finish, runs it now; otherwise re-checks injuries
+           and fixes the lineup and captain if needed. Emails only if it changed or failed something.
+Changes are only sent when the repository variable BOT_LIVE is "true". Until then every job runs
+as a shadow: the same emails, marked [shadow], and nothing is sent.
 """
 import argparse
+import csv
+import json
 import os
+import traceback
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pandas as pd
 from dotenv import load_dotenv
 
+import approvals
 import auth
+import chips
 import data
 import executor
 import model
+import news
+import optimizer
 import recommend
+import schedule
 import team as team_module
 
+EASTERN = "America/New_York"
+FLAGS = Path(__file__).with_name("state") / "flags.csv"
+LINEUP_CHIPS = {"3xc", "bboost"}          # played through the lineup request
+TRANSFER_CHIPS = {"wildcard", "freehit"}  # played through the transfers request
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--email", action="store_true")
-    parser.add_argument("--horizon", type=int, default=6)
-    args = parser.parse_args()
-    load_dotenv(Path(__file__).with_name(".env"))
 
+@dataclass
+class Context:
+    season: data.Season
+    now: pd.Timestamp
+    gw: int
+    deadline: pd.Timestamp
+    horizon_gws: list
+    all_gws: list
+    per_gw: pd.DataFrame
+    pf: pd.DataFrame
+    team: team_module.Team
+    token: str | None
+    login: str
+    news_lines: list
+    live: bool
+    started: pd.Timestamp            # the real time the run started; now + elapsed = the time of a write
+
+    def clock(self):
+        return self.now + (pd.Timestamp.now(tz="UTC") - self.started)
+
+    @property
+    def players(self):
+        return self.season.players
+
+    @property
+    def plan_xp(self):
+        return self.per_gw[self.horizon_gws]
+
+    @property
+    def local_deadline(self):
+        return self.deadline.tz_convert(EASTERN).strftime("%a %d %b %H:%M")
+
+
+def load_context(now, live, need_login=False):
+    started = pd.Timestamp.now(tz="UTC")
     season = data.load_live()
-    history = data.load_with_prior(season)
-    now = pd.Timestamp.now(tz="UTC")
     upcoming = season.events[season.events.deadline_time > now]
     if upcoming.empty:
-        print("Season over.")
-        return
-    next_gw = int(upcoming.id.min())
-    deadline = upcoming.deadline_time.min()
-    gws = list(range(next_gw, min(next_gw + args.horizon, 39)))
-    per_gw, pf = model.project(history, season.players, season.fixtures, season.teams, gws, now)
-
+        return None
+    gw, deadline = int(upcoming.id.min()), upcoming.deadline_time.min()
+    history = data.load_with_prior(season)
+    token = None
     try:
-        my_team = team_module.load_private(auth.access_token(), season.players)
+        token = auth.access_token()
+        my_team = team_module.load_private(token, season.players)
         login = "Logged in: squad, selling prices and free transfers are live from FPL."
     except auth.LoginNeeded as problem:
+        if need_login:
+            raise
         team_id = os.getenv("FPL_TEAM_ID")
         if not team_id:
             raise SystemExit(f"Not logged in ({problem}) and FPL_TEAM_ID isn't set either.")
         my_team = team_module.load(int(team_id), season.players)
         login = f"NOT LOGGED IN: {problem}\nUsing public data, which shows the squad as of the last deadline."
+    horizon_gws, all_gws = recommend.gameweeks(gw, my_team)
+    overrides, news_lines = news.load(gw, now)
+    per_gw, pf = model.project(history, season.players, season.fixtures, season.teams, all_gws, now,
+                               model.Params(start_ceiling=model.LIVE_START_CEILING), start_news=overrides)
+    return Context(season, now, gw, deadline, horizon_gws, all_gws, per_gw, pf, my_team, token, login,
+                   news_lines, live, started)
 
-    text, base, wait, gain = recommend.build(per_gw, pf, season.players, season.fixtures, season.teams, my_team, gws)
-    actions = executor.decide(my_team, base.weeks[0], wait.weeks[0], gain, season.players)
-    hours = (deadline - now).total_seconds() / 3600
-    report = "\n\n".join([f"{login}\nGW{next_gw} deadline in {hours:.0f} hours.", text,
-                          executor.describe(actions, season.players)])
-    print(report)
-    if args.email:
-        import mailer
-        local = deadline.tz_convert("America/New_York").strftime("%a %d %b %H:%M")
-        asks = sum(a.mode == "ask" for a in actions)
-        mailer.send(f"GW{next_gw} plan (deadline {local})" + (f", {asks} thing(s) need your OK" if asks else ""), report)
+
+def email(ctx_or_live, subject, body):
+    import mailer
+    live = ctx_or_live.live if isinstance(ctx_or_live, Context) else ctx_or_live
+    mailer.send(("" if live else "[shadow] ") + subject, body)
+
+
+def run_link():
+    if os.getenv("GITHUB_RUN_ID"):
+        return f"{os.getenv('GITHUB_SERVER_URL')}/{os.getenv('GITHUB_REPOSITORY')}/actions/runs/{os.getenv('GITHUB_RUN_ID')}"
+    return "(local run)"
+
+
+def log_flags(ctx, job):
+    """FPL's injury flags at each deadline run: in a few weeks this measures how often unflagged
+    regulars actually start (the start ceiling in model.py)."""
+    flagged = ctx.players[ctx.players.status != "a"]
+    new = not FLAGS.exists()
+    FLAGS.parent.mkdir(exist_ok=True)
+    with FLAGS.open("a", newline="") as f:
+        out = csv.writer(f)
+        if new:
+            out.writerow(["at", "gw", "job", "element", "status", "chance", "news"])
+        for p in flagged.itertuples():
+            out.writerow([ctx.now.isoformat(), ctx.gw, job, p.id, p.status, p.chance, p.news])
+
+
+# ---------------------------------------------------------------- jobs
+
+def dry_run(ctx, send_email):
+    analysis = recommend.analyse(ctx.per_gw, ctx.players, ctx.team, ctx.horizon_gws)
+    text = recommend.report(analysis, ctx.per_gw, ctx.pf, ctx.players, ctx.season.fixtures, ctx.season.teams,
+                            ctx.team, ctx.horizon_gws)
+    actions = executor.decide(ctx.team, analysis.base.weeks[0], analysis.wait.weeks[0], analysis.gain, ctx.players)
+    hours = (ctx.deadline - ctx.now).total_seconds() / 3600
+    body = "\n\n".join([f"{ctx.login}\nGW{ctx.gw} deadline in {hours:.0f} hours.", "\n".join(ctx.news_lines), text,
+                        executor.describe(actions, ctx.players)])
+    print(body)
+    if send_email:
+        email(True, f"GW{ctx.gw} plan (deadline {ctx.local_deadline})", body)
+    return True
+
+
+def preview(ctx):
+    a = recommend.analyse(ctx.per_gw, ctx.players, ctx.team, ctx.horizon_gws)
+    first = a.base.weeks[0]
+    name = ctx.players.set_index("id")["web_name"]
+    asks = []
+    if first.hits:
+        moves = ", ".join(f"{name[o]} -> {name[i]}" for o, i in zip(first.transfers_out, first.transfers_in))
+        asks.append(f"Transfers with {first.hits} hit(s), -{4 * first.hits} points: {moves}")
+    if a.chip_proposal:
+        value = a.wildcard_gain if a.chip_proposal == "wildcard" else a.chip_table.loc[ctx.gw, a.chip_proposal]
+        asks.append(f"Play {chips.NAMES[a.chip_proposal]} this week (about {value:+.1f} expected points)")
+    # What the main run does if you don't reply: no hits, no chip.
+    if first.hits:
+        base, wait, gain, _ = recommend.plan_this_week(ctx.plan_xp, ctx.players, ctx.team, ctx.gw,
+                                                       optimizer.Settings(max_hits=0))
+        default = executor.decide(ctx.team, base.weeks[0], wait.weeks[0], gain, ctx.players)
+    else:
+        default = executor.decide(ctx.team, first, a.wait.weeks[0], a.gain, ctx.players)
+    code = None
+    if asks:
+        code = approvals.new_code()
+        approvals.save({"gw": ctx.gw, "code": code, "created": ctx.now.isoformat(), "chip": a.chip_proposal,
+                        "transfers": {"in": first.transfers_in, "out": first.transfers_out} if first.hits else None,
+                        "asks": asks})
+    later = [i for w in a.base.weeks[:2] for i in w.transfers_in]
+    news.write_watchlist(ctx.gw, ctx.deadline, list(ctx.team.squad) + later, ctx.players, ctx.season.teams)
+
+    parts = [ctx.login]
+    if asks:
+        parts.append("NEEDS YOUR OK. Reply YES to this email to approve all of it; reply NO, or don't reply, "
+                     "to skip it. Your reply must arrive before the main run (about 2 hours before the deadline).\n"
+                     + "\n".join(f"  - {ask}" for ask in asks))
+    parts.append(executor.describe(default, ctx.players,
+                                   heading="AT THE MAIN RUN (about 2 hours before the deadline), without your OK:"))
+    parts.append(recommend.report(a, ctx.per_gw, ctx.pf, ctx.players, ctx.season.fixtures, ctx.season.teams,
+                                  ctx.team, ctx.horizon_gws))
+    body = "\n\n".join(parts)
+    print(body)
+    subject = f"GW{ctx.gw} preview, deadline {ctx.local_deadline}"
+    email(ctx, subject + (f": reply YES to approve [{code}]" if code else ""), body)
+    return True
+
+
+def approved_actions(ctx, proposal, answer, notes):
+    """The actions for this week when you replied YES, or None to fall back to the no-approval plan."""
+    if answer != "yes":
+        return None, None
+    team, players, gw = ctx.team, ctx.players, ctx.gw
+    available, _ = team.chips_available(gw)
+    chip = proposal.get("chip") if proposal.get("chip") in available else None
+    settings = optimizer.Settings(max_hits=0, triple_captain_gw=gw if chip == "3xc" else None,
+                                  bench_boost_gw=gw if chip == "bboost" else None)
+    args = (ctx.plan_xp, players, team.squad, team.bank, team.free_transfers, team.sell_prices)
+    if chip in TRANSFER_CHIPS:
+        xp = ctx.per_gw[[gw]] if chip == "freehit" else ctx.plan_xp
+        plan = optimizer.plan(xp, *args[1:], optimizer.Settings(wildcard_gw=gw, ft_value=0 if chip == "freehit" else 1.5))
+        week = plan.weeks[0]
+        actions = []
+        if week.transfers_in:
+            actions.append(executor.Action("transfers", "approved", f"{chips.NAMES[chip]} (you approved)", "transfers/",
+                                           executor.transfers_payload(team.entry, week, players, team.sell_prices, chip)))
+        actions.append(executor.lineup_action(team, week, players))
+        return actions, chip
+    wanted = proposal.get("transfers")
+    if wanted:
+        ins, outs = wanted["in"], wanted["out"]
+        by_id = players.set_index("id")
+        ready = all(i in by_id.index and (by_id.loc[i, "status"] == "a" or by_id.loc[i, "chance"] >= 75) for i in ins)
+        if set(outs) <= set(team.squad) and not set(ins) & set(team.squad) and ready:
+            forced = optimizer.plan(*args, replace(settings, max_hits=2, forced={gw: (ins, outs)}))
+            free = recommend.plan_this_week(ctx.plan_xp, players, team, gw, settings)[0]
+            if forced.weeks and forced.objective >= free.objective:
+                week = forced.weeks[0]
+                return [executor.Action("transfers", "approved", f"{week.hits} hit(s) (you approved)", "transfers/",
+                                        executor.transfers_payload(team.entry, week, players, team.sell_prices)),
+                        executor.lineup_action(team, week, players, chip)], chip
+            notes.append("The transfers you approved no longer beat the free-transfer plan on today's data, "
+                         "so they weren't made.")
+        else:
+            notes.append("The transfers you approved can't be made as approved (a player is now doubtful or "
+                         "already moved), so they weren't made.")
+    if chip:
+        base, wait, gain, _ = recommend.plan_this_week(ctx.plan_xp, players, team, gw, settings)
+        return executor.decide(team, base.weeks[0], wait.weeks[0], gain, players, chip=chip), chip
+    return None, None
+
+
+def main_run(ctx, job="main"):
+    """The changes for the coming deadline. Returns (ok, chip played)."""
+    log_flags(ctx, job)
+    notes, proposal, answer = [], approvals.load(ctx.gw), None
+    if proposal:
+        try:
+            answer = approvals.check(proposal["code"], pd.Timestamp(proposal["created"]))
+            notes.append({"yes": "You approved the preview's request.", "no": "You declined the preview's request.",
+                          None: "No reply to the preview's request, so it was skipped."}[answer])
+        except Exception as problem:
+            notes.append(f"Couldn't read your reply ({type(problem).__name__}: {problem}), so the request was skipped.")
+    active = ctx.team.active_chip
+    if active:
+        notes.append(f"You've already played {chips.NAMES.get(active, active)} this gameweek; the bot keeps it.")
+        answer = None if answer == "yes" and proposal and proposal.get("chip") else answer
+    actions, chip = approved_actions(ctx, proposal or {}, answer, notes)
+    if actions is None and active in TRANSFER_CHIPS:
+        notes.append("With that chip active, transfers and the lineup are left to you.")
+        actions, chip = [], active
+    elif actions is None:
+        settings = optimizer.Settings(max_hits=0, triple_captain_gw=ctx.gw if active == "3xc" else None,
+                                      bench_boost_gw=ctx.gw if active == "bboost" else None)
+        base, wait, gain, _ = recommend.plan_this_week(ctx.plan_xp, ctx.players, ctx.team, ctx.gw, settings)
+        actions = executor.decide(ctx.team, base.weeks[0], wait.weeks[0], gain, ctx.players,
+                                  chip=active, chip_already_set=bool(active))
+        chip = active
+    ok = executor.send(actions, ctx.token, ctx.deadline, ctx.live, job, now=ctx.clock())
+    problems = []
+    if ctx.live and any(a.outcome == "sent" for a in actions):
+        try:
+            problems = executor.verify(actions, data.get(f"my-team/{ctx.team.entry}/", token=ctx.token))
+        except Exception as problem:
+            problems = [f"couldn't read my-team back to check ({type(problem).__name__}: {problem})"]
+    success = ok and not problems
+    lineup = next((a for a in actions if a.kind == "lineup"), None)
+    week_desc = describe_lineup(ctx, lineup.payload) if lineup else ""
+    parts = [ctx.login, "\n".join(ctx.news_lines), "\n".join(notes),
+             executor.describe(actions, ctx.players, heading=f"GW{ctx.gw} {job.upper()} RUN"),
+             "\n".join(problems), week_desc, f"Run: {run_link()}"]
+    body = "\n\n".join(p for p in parts if p)
+    print(body)
+    if success:
+        changed = [a for a in actions if a.mode in ("auto", "approved")]
+        summary = ", ".join(a.kind for a in changed) or "no changes needed"
+        email(ctx, f"GW{ctx.gw} {job} run done: {summary}", body)
+    else:
+        failed = next((a.outcome for a in actions if a.outcome.startswith(("FAILED", "not sent"))), "; ".join(problems))
+        later = ("It tries again at the next check and at the final check (about 45 min before the deadline)."
+                 if job == "main" else "This was the last scheduled try before the deadline.")
+        email(True, f"FPL ACTION NEEDED: GW{ctx.gw} {job} run couldn't make its changes",
+              f"{failed}\n\n{later} To be safe, make these changes yourself on the FPL site "
+              f"(deadline {ctx.local_deadline} ET):\n\n{body}")
+    return success, chip
+
+
+def describe_lineup(ctx, payload):
+    by_id = ctx.players.set_index("id")
+    xi = [p for p in payload["picks"] if p["position"] <= 11]
+    bench = [p for p in payload["picks"] if p["position"] > 11]
+    tag = lambda p: " (C)" if p["is_captain"] else " (VC)" if p["is_vice_captain"] else ""
+    lines = [f"LINEUP for GW{ctx.gw}" + (f" (chip: {payload['chip']})" if payload.get("chip") else "")]
+    lines += [f"  {by_id.loc[p['element'], 'web_name']:<16} {ctx.per_gw.loc[p['element'], ctx.gw]:>4.1f}{tag(p)}" for p in xi]
+    lines.append("  bench: " + ", ".join(by_id.loc[p["element"], "web_name"] for p in bench))
+    return "\n".join(lines)
+
+
+def final_check(ctx, record):
+    """Lineup and captain against the latest injury news. Returns True if all is well."""
+    if "main" not in record["done"]:
+        ok, chip = main_run(ctx, job="final")
+        return ok, chip
+    log_flags(ctx, "final")
+    chip = record.get("chip") or ctx.team.active_chip
+    if chip in TRANSFER_CHIPS:
+        by_id = ctx.players.set_index("id")
+        out = [by_id.loc[p["element"], "web_name"] for p in ctx.team.picks
+               if p["position"] <= 11 and by_id.loc[p["element"], "status"] != "a"]
+        if out:
+            email(True, f"FPL ACTION NEEDED: GW{ctx.gw} starters flagged under your {chips.NAMES[chip]}",
+                  f"Flagged since the main run: {', '.join(out)}. With a {chips.NAMES[chip]} active the bot "
+                  f"leaves the lineup to you. Deadline {ctx.local_deadline} ET.")
+        return True, chip
+    settings = optimizer.Settings(frozen_gws={ctx.gw}, triple_captain_gw=ctx.gw if chip == "3xc" else None,
+                                  bench_boost_gw=ctx.gw if chip == "bboost" else None)
+    plan = optimizer.plan(ctx.plan_xp, ctx.players, ctx.team.squad, ctx.team.bank, ctx.team.free_transfers,
+                          ctx.team.sell_prices, settings)
+    action = executor.lineup_action(ctx.team, plan.weeks[0], ctx.players, chip, chip_already_set=bool(chip))
+    if action.mode == "skip":
+        print(f"Final check: {action.why}.")
+        return True, chip
+    ok = executor.send([action], ctx.token, ctx.deadline, ctx.live, "final", now=ctx.clock())
+    problems = []
+    if ctx.live and action.outcome == "sent":
+        problems = executor.verify([action], data.get(f"my-team/{ctx.team.entry}/", token=ctx.token))
+    body = "\n\n".join(p for p in [ctx.login, "\n".join(ctx.news_lines),
+                                   executor.describe([action], ctx.players, heading=f"GW{ctx.gw} FINAL CHECK"),
+                                   "\n".join(problems), describe_lineup(ctx, action.payload), f"Run: {run_link()}"] if p)
+    print(body)
+    if ok and not problems:
+        email(ctx, f"GW{ctx.gw} final check: lineup updated", body)
+    else:
+        email(True, f"FPL ACTION NEEDED: GW{ctx.gw} final check couldn't update the lineup",
+              f"Make the change yourself on the FPL site (deadline {ctx.local_deadline} ET).\n\n{body}")
+    return ok and not problems, chip
+
+
+def check_write(ctx):
+    """Re-save the lineup exactly as it is and read it back: proves the login can write, changes nothing.
+    Skipped while any chip is active, so a chip can't be undone by mistake."""
+    if not ctx.token:
+        raise SystemExit("check-write needs the login (FPL_REFRESH_TOKEN).")
+    if ctx.team.active_chip:
+        print(f"A chip ({ctx.team.active_chip}) is active this gameweek: not re-saving the lineup.")
+        return False
+    picks = [{k: p[k] for k in ("element", "position", "is_captain", "is_vice_captain")} for p in ctx.team.picks]
+    response = data.post(f"my-team/{ctx.team.entry}/", ctx.token, {"chip": None, "picks": picks})
+    after = data.get(f"my-team/{ctx.team.entry}/", token=ctx.token)["picks"]
+    same = sorted((p["element"], p["position"], p["is_captain"], p["is_vice_captain"]) for p in after) == \
+        sorted((p["element"], p["position"], p["is_captain"], p["is_vice_captain"]) for p in picks)
+    print(f"FPL answered HTTP {response.status_code}: {response.text[:300]}")
+    print("Lineup on FPL afterwards is unchanged." if same else "WARNING: the lineup on FPL changed!")
+    return response.status_code in (200, 201, 202, 204) and same
+
+
+def tick(now, live):
+    """Run whichever job is due (schedule.py), and remember that it ran."""
+    events = pd.DataFrame(data.get("bootstrap-static/")["events"])
+    events["deadline_time"] = pd.to_datetime(events["deadline_time"], utc=True)
+    upcoming = events[events.deadline_time > now]
+    if upcoming.empty:
+        print("Season over.")
+        return None
+    gw, deadline = int(upcoming.id.min()), upcoming.deadline_time.min()
+    record = schedule.load(gw, deadline)
+    job = schedule.due(record, deadline, now)
+    if job is None:
+        schedule.save(record)
+        print(f"Nothing due. GW{gw} deadline {deadline.tz_convert(EASTERN):%a %d %b %H:%M} ET, "
+              f"{(deadline - now).total_seconds() / 3600:.1f} h away.")
+        return None
+    print(f"Running the {job} job for GW{gw}.")
+    record["running"] = job                  # so a crash can say which job it was
+    schedule.save(record)
+    ctx = load_context(now, live, need_login=job in ("main", "final"))
+    if job == "preview":
+        ok, chip = preview(ctx), None
+    elif job == "main":
+        ok, chip = main_run(ctx)
+    else:
+        ok, chip = final_check(ctx, record)
+    if job == "final" and "main" not in record["done"] and ok:
+        record["done"]["main"] = now.isoformat()
+    if chip and ok:
+        record["chip"] = chip
+    record.pop("running", None)
+    schedule.save(schedule.mark(record, job, now, ok))
+    return job
+
+
+def saved_schedule():
+    return json.loads(schedule.STATE.read_text()) if schedule.STATE.exists() else {}
+
+
+def near_deadline(now):
+    """For a crash before the job is known: is a deadline close enough that you need to hear about it?"""
+    try:
+        return pd.Timestamp(saved_schedule()["deadline"]) - now < 3 * schedule.H
+    except (KeyError, ValueError):
+        return False
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--job", choices=["dry-run", "tick", "preview", "main", "final", "check-write"],
+                        default="dry-run")
+    parser.add_argument("--email", action="store_true", help="email the dry run")
+    args = parser.parse_args()
+    load_dotenv(Path(__file__).with_name(".env"))
+    live = os.getenv("BOT_LIVE", "").strip().lower() == "true"
+    now = pd.Timestamp.now(tz="UTC")
+    if not live:
+        print("Shadow mode: nothing is sent to FPL (repository variable BOT_LIVE is not true).")
+    try:
+        if args.job == "tick":
+            tick(now, live)
+            return
+        ctx = load_context(now, live, need_login=args.job in ("main", "final"))
+        if ctx is None:
+            print("Season over.")
+        elif args.job == "dry-run":
+            dry_run(ctx, args.email)
+        elif args.job == "preview":
+            preview(ctx)
+        elif args.job == "main":
+            main_run(ctx)
+        elif args.job == "check-write":
+            if not check_write(ctx):
+                raise SystemExit("check-write: FPL didn't accept the re-saved lineup (see above).")
+        else:
+            final_check(ctx, schedule.load(ctx.gw, ctx.deadline))
+    except Exception as problem:
+        job = saved_schedule().get("running") if args.job == "tick" else args.job
+        if job in ("preview", "main", "final") or (args.job == "tick" and near_deadline(now)):
+            email(True, f"FPL ACTION NEEDED: the bot's {job} run crashed",
+                  f"{type(problem).__name__}: {problem}\n\nIf the deadline is close, check your team on the FPL "
+                  f"site yourself.\n\nRun: {run_link()}\n\n{traceback.format_exc()}")
+        raise
 
 
 if __name__ == "__main__":

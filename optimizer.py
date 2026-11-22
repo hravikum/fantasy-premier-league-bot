@@ -32,6 +32,7 @@ class Settings:
     banned: set = field(default_factory=set)   # never buy
     frozen_gws: set = field(default_factory=set)   # no transfers in these gameweeks
     transfer_limit: dict = field(default_factory=dict)   # gameweek -> most transfers allowed
+    forced: dict = field(default_factory=dict)   # gameweek -> (ids in, ids out): exactly these transfers
     time_limit: float = 120.0
 
 
@@ -79,7 +80,7 @@ def candidate_pool(xp, players, squad, settings):
     score = (xp.values * weights).sum(axis=1)
     ranked = players.assign(score=score).sort_values("score", ascending=False)
     ranked = ranked[~ranked["id"].isin(settings.banned) & (ranked["score"] > 0)]
-    keep = set(squad)
+    keep = set(squad) | {i for ins, _ in settings.forced.values() for i in ins}
     for pos, size in POOL.items():
         keep |= set(ranked[ranked["position"] == pos]["id"].head(size))
     return players[players["id"].isin(keep)].reset_index(drop=True)
@@ -164,6 +165,14 @@ def plan(xp, players, squad, bank, free_transfers, sell_prices=None, settings=Se
             constrain({tin[t][i]: 1 for i in range(n)}, 0, 0)
         if gw in settings.transfer_limit:
             constrain({tin[t][i]: 1 for i in range(n)}, 0, settings.transfer_limit[gw])
+        if gw in settings.forced:
+            ins, outs = settings.forced[gw]
+            constrain({tin[t][i]: 1 for i in range(n)}, len(ins), len(ins))
+            for i in range(n):
+                if ids[i] in ins:
+                    constrain({tin[t][i]: 1}, 1, 1)
+                if ids[i] in outs:
+                    constrain({tout[t][i]: 1}, 1, 1)
         if gw == settings.wildcard_gw:
             constrain({paid[t]: 1}, 0, 0)
         else:
