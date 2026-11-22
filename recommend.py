@@ -10,6 +10,7 @@ from dataclasses import replace
 import pandas as pd
 
 import data
+import executor
 import model
 import optimizer
 import team as team_module
@@ -64,14 +65,7 @@ def build(per_gw, pf, players, fixtures, teams, team, horizon_gws):
     by_id = players.set_index("id")
     name = lambda i: f"{by_id.loc[i, 'web_name']} ({by_id.loc[i, 'position']}, £{by_id.loc[i, 'price']:.1f})"
     chips, expires = team.chips_available(horizon_gws[0])
-    this_week = {horizon_gws[0]}
-    wait = optimizer.plan(per_gw, players, team.squad, team.bank, team.free_transfers, team.sell_prices,
-                          optimizer.Settings(frozen_gws=this_week))
-    # While a Wildcard or Free Hit is active, this week's transfers are left to you.
-    base = (optimizer.plan(per_gw, players, team.squad, team.bank, team.free_transfers, team.sell_prices)
-            if team.transfers_open else wait)
-    if not base.weeks or not wait.weeks:
-        raise RuntimeError(f"Optimizer found no plan: {base.status} / {wait.status}")
+    base, wait, gain, held_back = plan_this_week(per_gw, players, team, horizon_gws[0])
     wildcard = None
     if "wildcard" in chips:
         wildcard = optimizer.plan(per_gw, players, team.squad, team.bank, team.free_transfers,
@@ -84,14 +78,17 @@ def build(per_gw, pf, players, fixtures, teams, team, horizon_gws):
                  + (", ".join(team_module.CHIPS[c] for c in chips) or "none"))
     lines.append("")
     if first.transfers_in:
-        gain = base.objective - wait.objective
         lines.append(f"TRANSFERS for GW{first.gw}" + (f" ({first.hits} hit, -{4 * first.hits})" if first.hits else ""))
         for out, inn in zip(first.transfers_out, first.transfers_in):
             lines.append(f"  OUT {name(out)}  ->  IN {name(inn)}   "
                          f"next {len(horizon_gws)} GWs: {per_gw.loc[out].sum():.1f} -> {per_gw.loc[inn].sum():.1f} xP")
-        lines.append(f"  Making these moves now vs. waiting a week: {gain:+.1f} xP over the horizon")
+        lines.append(f"  Making these moves now vs. waiting a week: {gain:+.1f} xP over the horizon "
+                     f"(each move adds at least {executor.GAIN_PER_TRANSFER:.0f})")
     else:
         lines.append(f"TRANSFERS for GW{first.gw}: none. Banking the free transfer.")
+    if held_back:
+        lines.append(f"  {held_back} more move(s) added less than {executor.GAIN_PER_TRANSFER:.0f} xP each "
+                     "over waiting, so they wait.")
     lines.append("")
     lines.append(f"STARTING XI for GW{first.gw} (expected {first.xp:.1f} with captain)")
     for i in first.xi:
@@ -122,9 +119,31 @@ def build(per_gw, pf, players, fixtures, teams, team, horizon_gws):
         lines.append("Doubles/blanks: " + " | ".join(notes))
     lines.append("")
     lines.append(top_projections(per_gw, players))
-    gain = base.objective - wait.objective
     return "\n".join(lines), base, wait, gain
 
+
+def plan_this_week(per_gw, players, team, gw):
+    """The plan to act on, the plan that waits a week, how much better acting is, and how many of
+    the full plan's moves were held back.
+
+    Every transfer made now has to earn executor.GAIN_PER_TRANSFER on its own: the best plan with
+    k transfers this week must beat the best plan with k-1 by that much. If the last one doesn't,
+    the plan with one fewer is tried, so a weak move can't ride along with a strong one."""
+    args = (per_gw, players, team.squad, team.bank, team.free_transfers, team.sell_prices)
+    wait = optimizer.plan(*args, optimizer.Settings(frozen_gws={gw}))
+    if not wait.weeks:
+        raise RuntimeError(f"Optimizer found no plan: {wait.status}")
+    if not team.transfers_open:              # a Wildcard or Free Hit is active: transfers are yours
+        return wait, wait, 0.0, 0
+    best = optimizer.plan(*args)
+    wanted = len(best.weeks[0].transfers_in)
+    while best.weeks[0].transfers_in:
+        count = len(best.weeks[0].transfers_in)
+        fewer = wait if count == 1 else optimizer.plan(*args, optimizer.Settings(transfer_limit={gw: count - 1}))
+        if best.objective - fewer.objective >= executor.GAIN_PER_TRANSFER:
+            break
+        best = fewer
+    return best, wait, best.objective - wait.objective, wanted - len(best.weeks[0].transfers_in)
 
 def top_projections(per_gw, players, count=6):
     by_id = players.set_index("id")

@@ -31,6 +31,7 @@ class Settings:
     locked: set = field(default_factory=set)   # never sell
     banned: set = field(default_factory=set)   # never buy
     frozen_gws: set = field(default_factory=set)   # no transfers in these gameweeks
+    transfer_limit: dict = field(default_factory=dict)   # gameweek -> most transfers allowed
     time_limit: float = 120.0
 
 
@@ -161,6 +162,8 @@ def plan(xp, players, squad, bank, free_transfers, sell_prices=None, settings=Se
         constrain({ft[t + 1]: 1, ft[t]: -1, used[t]: 1, waste[t]: 1}, 1, 1)
         if gw in settings.frozen_gws:
             constrain({tin[t][i]: 1 for i in range(n)}, 0, 0)
+        if gw in settings.transfer_limit:
+            constrain({tin[t][i]: 1 for i in range(n)}, 0, settings.transfer_limit[gw])
         if gw == settings.wildcard_gw:
             constrain({paid[t]: 1}, 0, 0)
         else:

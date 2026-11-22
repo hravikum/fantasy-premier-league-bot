@@ -1,6 +1,7 @@
 """Executor tests: the requests it would send and the hybrid policy.  python3 -m pytest test_executor.py"""
 import executor
 import optimizer
+import recommend
 import team
 import test_optimizer as fixtures
 
@@ -46,7 +47,8 @@ def test_free_transfer_with_a_real_gain_is_automatic():
 
 def test_small_gain_waits_and_lineup_uses_current_squad():
     players, me, planned, waiting, star = scenario()
-    actions = executor.decide(me, planned.weeks[0], waiting.weeks[0], 0.3, players)
+    n = len(planned.weeks[0].transfers_in)
+    actions = executor.decide(me, planned.weeks[0], waiting.weeks[0], n * executor.GAIN_PER_TRANSFER - 0.1, players)
     assert actions[0].mode == "skip" and "waiting a week" in actions[0].why
     assert {p["element"] for p in actions[1].payload["picks"]} == set(me.squad)
 
@@ -70,3 +72,24 @@ def test_lineup_already_right_is_left_alone():
     me.picks = swapped
     actions = executor.decide(me, planned.weeks[0], waiting.weeks[0], 0.0, players)
     assert actions[-1].mode == "auto" and "captain:" in actions[-1].why
+
+
+def test_each_transfer_must_clear_the_bar():
+    """A strong move and a weak one, with free transfers to spare: only the strong one is made now."""
+    players, xp = fixtures.make_pool()
+    squad = fixtures.cheapest_squad(players)
+    outsiders = players[~players.id.isin(squad)]
+    big = outsiders[outsiders.position == "MID"].iloc[0]["id"]
+    small = outsiders[outsiders.position == "DEF"].iloc[0]["id"]
+    flat = xp.copy()
+    flat.loc[:] = 2.0
+    flat.loc[big] = 8.0                       # +6 a week over any midfielder
+    flat.loc[small] = 2.3                     # +0.3 a week over any defender
+    players.loc[players.id.isin([big, small]), "price"] = 4.0
+    me = team.Team(1, "x", squad, 10.0, 5, {i: players.set_index("id").loc[i, "price"] for i in squad})
+    full = optimizer.plan(flat, players, squad, 10.0, 5, me.sell_prices)
+    raw = full.weeks[0].transfers_in
+    assert {big, small} <= set(raw)           # unconstrained, it makes both (plus free zero-gain swaps)
+    base, wait, gain, held = recommend.plan_this_week(flat, players, me, fixtures.GWS[0])
+    assert base.weeks[0].transfers_in == [big] and held == len(raw) - 1
+    assert executor.decide(me, base.weeks[0], wait.weeks[0], gain, players)[0].mode == "auto"

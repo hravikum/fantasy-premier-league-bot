@@ -21,7 +21,8 @@ nothing. Phase 4 turns the sending on.
   pairs, as FPL requires.
 - **`executor.py`**: the hybrid policy.
   - **Automatic:** starting XI, bench order, captain and vice-captain, and transfers that cost
-    no points and beat waiting a week by at least 1 expected point.
+    no points where **each** move adds at least 1 expected point over waiting a week. If the
+    last move in a batch doesn't, the plan is re-solved with one fewer.
   - **Asks you first:** anything with a hit, and any chip.
   - If transfers wait, the lineup is picked for the squad you actually have.
 - **`bot.py`**: one run. It loads the data, logs in, plans, writes the report and shows the

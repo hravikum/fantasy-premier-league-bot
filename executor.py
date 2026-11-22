@@ -4,7 +4,7 @@ Phase 3 is a dry run: the exact requests the FPL site sends are built and shown,
 
 Hybrid policy:
   automatic   starting XI, bench order, captain and vice-captain; transfers that cost no points
-              and beat waiting a week by at least MIN_GAIN expected points
+              and beat waiting a week by at least GAIN_PER_TRANSFER expected points per transfer
   ask first   any transfer plan with a points hit, and any chip
 If transfers aren't made (waiting, or waiting for your OK), the lineup is picked for the squad
 you actually have, not the one the plan would buy.
@@ -12,7 +12,7 @@ you actually have, not the one the plan would buy.
 import json
 from dataclasses import dataclass
 
-MIN_GAIN = 1.0                       # expected points over the horizon, vs. waiting a week
+GAIN_PER_TRANSFER = 1.0              # expected points over the horizon, vs. waiting a week, per transfer
 ORDER = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3}
 
 
@@ -66,7 +66,7 @@ def lineup_changes(current, payload, players):
     return changes
 
 
-def decide(team, planned, waiting, gain, players, min_gain=MIN_GAIN):
+def decide(team, planned, waiting, gain, players, per_transfer=GAIN_PER_TRANSFER):
     """planned: this week of the full plan. waiting: this week with no transfers. gain: planned vs. waiting."""
     actions, lineup_week = [], waiting
     if planned.transfers_in:
@@ -75,8 +75,9 @@ def decide(team, planned, waiting, gain, players, min_gain=MIN_GAIN):
             mode, why = "skip", "a Wildcard or Free Hit is active this week: transfers are left to you"
         elif planned.hits:
             mode, why = "ask", f"{planned.hits} hit(s), -{4 * planned.hits}: needs your OK"
-        elif gain < min_gain:
-            mode, why = "skip", f"only {gain:+.1f} xP better than waiting a week (bar is {min_gain:+.1f})"
+        elif gain < per_transfer * len(planned.transfers_in):      # plan_this_week normally sees to this
+            bar = per_transfer * len(planned.transfers_in)
+            mode, why = "skip", f"only {gain:+.1f} xP better than waiting a week (bar is {bar:+.1f})"
         else:
             mode, why = "auto", f"free transfer(s), {gain:+.1f} xP better than waiting a week"
             lineup_week = planned
