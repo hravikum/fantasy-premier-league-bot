@@ -171,17 +171,31 @@ def verify(actions, mine):
     return problems
 
 
-def describe(actions, players, heading="WHAT THE BOT WOULD CHANGE ON FPL (dry run: nothing was sent)"):
+MODE_BADGES = {"auto": ("DO", "good"), "approved": ("DO, YOU APPROVED", "good"), "ask": ("NEEDS YOUR OK", "warn"),
+               "skip": ("LEAVE", "muted")}
+
+
+def describe(actions, players, heading="What the bot would change on FPL"):
+    """Email blocks for a list of actions: what each is, why, and (after send) what happened."""
+    import doc
     name = players.set_index("id")["web_name"]
-    label = {"auto": "DO", "approved": "DO (you approved)", "ask": "ASK YOU FIRST", "skip": "LEAVE"}
-    lines = [heading]
+    blocks = [doc.Heading(heading)]
     for action in actions:
-        result = f"  [{action.outcome}]" if action.outcome else ""
-        lines.append(f"  {label[action.mode]} - {action.kind}: {action.why}{result}")
-        if action.kind == "transfers":
-            for t in action.payload["transfers"]:
-                lines.append(f"      {name[t['element_out']]} (sell £{t['selling_price'] / 10:.1f}) -> "
-                             f"{name[t['element_in']]} (buy £{t['purchase_price'] / 10:.1f})")
-            if action.payload.get("chip"):
-                lines.append(f"      with chip: {action.payload['chip']}")
-    return "\n".join(lines)
+        label, tone = MODE_BADGES[action.mode]
+        if action.outcome == "sent":
+            label, tone = "DONE", "good"
+        elif action.outcome == "shadow":
+            label, tone = "SHADOW, NOT SENT", "info"
+        elif action.outcome:
+            label, tone = "FAILED", "bad"
+        kind = "Transfers" if action.kind == "transfers" else "Lineup and captain"
+        line = [doc.Badge(label, tone), "  ", doc.Tone(kind, bold=True), f": {action.why}"]
+        if action.outcome and action.outcome not in ("sent", "shadow"):
+            line += [" ", doc.Tone(action.outcome, "bad")]
+        blocks.append(doc.Para(line))
+        if action.kind == "transfers" and action.payload["transfers"]:
+            blocks.append(doc.Table(["Out", "Sell", "In", "Buy"], [
+                [name[t["element_out"]], f"£{t['selling_price'] / 10:.1f}", name[t["element_in"]],
+                 f"£{t['purchase_price'] / 10:.1f}"] for t in action.payload["transfers"]], right={1, 3},
+                note=f"Chip: {action.payload['chip']}" if action.payload.get("chip") else ""))
+    return blocks

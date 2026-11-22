@@ -11,8 +11,9 @@ from dotenv import load_dotenv
 SUBJECT_PREFIX = "FPL: "
 
 
-def send(subject, body):
-    """Send one plain-text email. Returns True if it went out; never raises."""
+def send(subject, body, html=None):
+    """Send one email: plain text, plus an HTML version when given. Returns True if it went out;
+    never raises."""
     load_dotenv(Path(__file__).with_name(".env"))
     address = os.getenv("GMAIL_ADDRESS")
     password = (os.getenv("GMAIL_APP_PASSWORD") or "").replace(" ", "")
@@ -24,6 +25,8 @@ def send(subject, body):
     message["To"] = os.getenv("EMAIL_TO") or address
     message["Subject"] = SUBJECT_PREFIX + subject
     message.set_content(body, cte="quoted-printable")
+    if html:
+        message.add_alternative(html, subtype="html", cte="quoted-printable")
     try:
         context = ssl.create_default_context(cafile=certifi.where())
         with smtplib.SMTP("smtp.gmail.com", 587, timeout=30) as smtp:

@@ -23,6 +23,7 @@ import os
 import traceback
 from dataclasses import dataclass, replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -31,6 +32,7 @@ import approvals
 import auth
 import chips
 import data
+import doc
 import executor
 import model
 import news
@@ -107,10 +109,33 @@ def load_context(now, live, need_login=False):
                    news_lines, live, started)
 
 
-def email(ctx_or_live, subject, body):
+def email(ctx_or_live, subject, message):
+    """Send a doc.Message as HTML with a plain-text copy. Shadow runs are marked in the subject."""
     import mailer
     live = ctx_or_live.live if isinstance(ctx_or_live, Context) else ctx_or_live
-    mailer.send(("" if live else "[shadow] ") + subject, body)
+    mailer.send(("" if live else "[shadow] ") + subject, doc.to_text(message), doc.to_html(message))
+
+
+def pills(ctx):
+    return [("Live: changes are sent" if ctx.live else "Shadow: nothing is sent", "good" if ctx.live else "info"),
+            ("Logged in" if ctx.token else "Not logged in", None if ctx.token else "bad")]
+
+
+def context_blocks(ctx):
+    """Login trouble and the team news, at the top of every email."""
+    blocks = []
+    if not ctx.token:
+        blocks.append(doc.Callout("Not logged in", ctx.login.splitlines(), "bad"))
+    if ctx.news_lines:
+        warn = any(line.startswith(("WARNING", "No Claude news check")) for line in ctx.news_lines)
+        blocks.append(doc.Callout("Team news", [line.strip() for line in ctx.news_lines], "warn" if warn else "info"))
+    return blocks
+
+
+def message(ctx, title, blocks, alert=False):
+    return doc.Message(title, f"Deadline {ctx.local_deadline} ET · {ctx.team.name} · {recommend.money(ctx.team)}",
+                       pills(ctx), blocks,
+                       footer=f"Run: {run_link()}", alert=alert)
 
 
 def run_link():
@@ -137,15 +162,14 @@ def log_flags(ctx, job):
 
 def dry_run(ctx, send_email):
     analysis = recommend.analyse(ctx.per_gw, ctx.players, ctx.team, ctx.horizon_gws)
-    text = recommend.report(analysis, ctx.per_gw, ctx.pf, ctx.players, ctx.season.fixtures, ctx.season.teams,
-                            ctx.team, ctx.horizon_gws)
     actions = executor.decide(ctx.team, analysis.base.weeks[0], analysis.wait.weeks[0], analysis.gain, ctx.players)
-    hours = (ctx.deadline - ctx.now).total_seconds() / 3600
-    body = "\n\n".join([f"{ctx.login}\nGW{ctx.gw} deadline in {hours:.0f} hours.", "\n".join(ctx.news_lines), text,
-                        executor.describe(actions, ctx.players)])
-    print(body)
+    blocks = context_blocks(ctx) + executor.describe(actions, ctx.players, "What the bot would change on FPL") + \
+        recommend.report(analysis, ctx.per_gw, ctx.pf, ctx.players, ctx.season.fixtures, ctx.season.teams,
+                         ctx.team, ctx.horizon_gws)
+    msg = message(ctx, f"GW{ctx.gw} plan", blocks)
+    print(doc.to_text(msg))
     if send_email:
-        email(True, f"GW{ctx.gw} plan (deadline {ctx.local_deadline})", body)
+        email(True, f"GW{ctx.gw} plan (deadline {ctx.local_deadline})", msg)
     return True
 
 
@@ -176,19 +200,20 @@ def preview(ctx):
     later = [i for w in a.base.weeks[:2] for i in w.transfers_in]
     news.write_watchlist(ctx.gw, ctx.deadline, list(ctx.team.squad) + later, ctx.players, ctx.season.teams)
 
-    parts = [ctx.login]
+    blocks = context_blocks(ctx)
     if asks:
-        parts.append("NEEDS YOUR OK. Reply YES to this email to approve all of it; reply NO, or don't reply, "
-                     "to skip it. Your reply must arrive before the main run (about 2 hours before the deadline).\n"
-                     + "\n".join(f"  - {ask}" for ask in asks))
-    parts.append(executor.describe(default, ctx.players,
-                                   heading="AT THE MAIN RUN (about 2 hours before the deadline), without your OK:"))
-    parts.append(recommend.report(a, ctx.per_gw, ctx.pf, ctx.players, ctx.season.fixtures, ctx.season.teams,
-                                  ctx.team, ctx.horizon_gws))
-    body = "\n\n".join(parts)
-    print(body)
+        blocks.append(doc.Callout("Needs your OK", [f"• {ask}" for ask in asks] + [
+            doc.Tone("Reply YES to this email to approve all of it. Reply NO, or don't reply, to skip it. "
+                     "Your reply has to arrive before the main run, about 2 hours before the deadline.", bold=True)],
+            "warn"))
+    blocks += executor.describe(default, ctx.players, "At the main run (about 2 hours before the deadline)"
+                                + (", without your OK" if asks else ""))
+    blocks += recommend.report(a, ctx.per_gw, ctx.pf, ctx.players, ctx.season.fixtures, ctx.season.teams,
+                               ctx.team, ctx.horizon_gws)
+    msg = message(ctx, f"GW{ctx.gw} preview", blocks)
+    print(doc.to_text(msg))
     subject = f"GW{ctx.gw} preview, deadline {ctx.local_deadline}"
-    email(ctx, subject + (f": reply YES to approve [{code}]" if code else ""), body)
+    email(ctx, subject + (f": reply YES to approve [{code}]" if code else ""), msg)
     return True
 
 
@@ -271,35 +296,44 @@ def main_run(ctx, job="main"):
             problems = [f"couldn't read my-team back to check ({type(problem).__name__}: {problem})"]
     success = ok and not problems
     lineup = next((a for a in actions if a.kind == "lineup"), None)
-    week_desc = describe_lineup(ctx, lineup.payload) if lineup else ""
-    parts = [ctx.login, "\n".join(ctx.news_lines), "\n".join(notes),
-             executor.describe(actions, ctx.players, heading=f"GW{ctx.gw} {job.upper()} RUN"),
-             "\n".join(problems), week_desc, f"Run: {run_link()}"]
-    body = "\n\n".join(p for p in parts if p)
-    print(body)
-    if success:
-        changed = [a for a in actions if a.mode in ("auto", "approved")]
-        summary = ", ".join(a.kind for a in changed) or "no changes needed"
-        email(ctx, f"GW{ctx.gw} {job} run done: {summary}", body)
-    else:
+    blocks = []
+    if not success:
         failed = next((a.outcome for a in actions if a.outcome.startswith(("FAILED", "not sent"))), "; ".join(problems))
         later = ("It tries again at the next check and at the final check (about 45 min before the deadline)."
                  if job == "main" else "This was the last scheduled try before the deadline.")
-        email(True, f"FPL ACTION NEEDED: GW{ctx.gw} {job} run couldn't make its changes",
-              f"{failed}\n\n{later} To be safe, make these changes yourself on the FPL site "
-              f"(deadline {ctx.local_deadline} ET):\n\n{body}")
+        blocks.append(doc.Callout("Action needed", [failed, later, doc.Tone(
+            f"To be safe, make the changes below yourself on the FPL site before {ctx.local_deadline} ET.", bold=True)],
+            "bad"))
+    blocks += context_blocks(ctx)
+    if notes:
+        blocks.append(doc.Callout("Your requests and chips", notes, "info"))
+    blocks += executor.describe(actions, ctx.players, "Changes")
+    if problems:
+        blocks.append(doc.Callout("Checked on FPL afterwards", problems, "bad"))
+    if lineup:
+        blocks += lineup_section(ctx, lineup.payload)
+    changed = [a for a in actions if a.mode in ("auto", "approved")]
+    summary = " and ".join({"transfers": "transfers", "lineup": "lineup"}[a.kind] for a in changed) or "no changes needed"
+    title = f"GW{ctx.gw} {job} run: {'done' if success else 'ACTION NEEDED'}"
+    msg = message(ctx, title, blocks, alert=not success)
+    print(doc.to_text(msg))
+    if success:
+        email(ctx, f"GW{ctx.gw} {job} run done: {summary}", msg)
+    else:
+        email(True, f"FPL ACTION NEEDED: GW{ctx.gw} {job} run couldn't make its changes", msg)
     return success, chip
 
 
-def describe_lineup(ctx, payload):
-    by_id = ctx.players.set_index("id")
-    xi = [p for p in payload["picks"] if p["position"] <= 11]
-    bench = [p for p in payload["picks"] if p["position"] > 11]
-    tag = lambda p: " (C)" if p["is_captain"] else " (VC)" if p["is_vice_captain"] else ""
-    lines = [f"LINEUP for GW{ctx.gw}" + (f" (chip: {payload['chip']})" if payload.get("chip") else "")]
-    lines += [f"  {by_id.loc[p['element'], 'web_name']:<16} {ctx.per_gw.loc[p['element'], ctx.gw]:>4.1f}{tag(p)}" for p in xi]
-    lines.append("  bench: " + ", ".join(by_id.loc[p["element"], "web_name"] for p in bench))
-    return "\n".join(lines)
+def lineup_section(ctx, payload):
+    """The lineup a request sets, as email blocks."""
+    picks = sorted(payload["picks"], key=lambda p: p["position"])
+    week = SimpleNamespace(gw=ctx.gw, xi=[p["element"] for p in picks if p["position"] <= 11],
+                           bench=[p["element"] for p in picks if p["position"] > 11],
+                           captain=next(p["element"] for p in picks if p["is_captain"]),
+                           vice_captain=next(p["element"] for p in picks if p["is_vice_captain"]))
+    xp = sum(ctx.per_gw.loc[i, ctx.gw] for i in week.xi) + ctx.per_gw.loc[week.captain, ctx.gw]
+    return [doc.Heading(f"Lineup for GW{ctx.gw}: {xp:.1f} expected with captain")] + \
+        recommend.lineup_blocks(week, ctx.per_gw, ctx.pf, ctx.players, ctx.season.teams, payload.get("chip"))
 
 
 def final_check(ctx, record):
@@ -315,8 +349,9 @@ def final_check(ctx, record):
                if p["position"] <= 11 and by_id.loc[p["element"], "status"] != "a"]
         if out:
             email(True, f"FPL ACTION NEEDED: GW{ctx.gw} starters flagged under your {chips.NAMES[chip]}",
-                  f"Flagged since the main run: {', '.join(out)}. With a {chips.NAMES[chip]} active the bot "
-                  f"leaves the lineup to you. Deadline {ctx.local_deadline} ET.")
+                  message(ctx, f"GW{ctx.gw} final check: ACTION NEEDED", [doc.Callout("Action needed", [
+                      f"Flagged since the main run: {', '.join(out)}.",
+                      f"With a {chips.NAMES[chip]} active the bot leaves the lineup to you."], "bad")], alert=True))
         return True, chip
     settings = optimizer.Settings(frozen_gws={ctx.gw}, triple_captain_gw=ctx.gw if chip == "3xc" else None,
                                   bench_boost_gw=ctx.gw if chip == "bboost" else None)
@@ -330,15 +365,21 @@ def final_check(ctx, record):
     problems = []
     if ctx.live and action.outcome == "sent":
         problems = executor.verify([action], data.get(f"my-team/{ctx.team.entry}/", token=ctx.token))
-    body = "\n\n".join(p for p in [ctx.login, "\n".join(ctx.news_lines),
-                                   executor.describe([action], ctx.players, heading=f"GW{ctx.gw} FINAL CHECK"),
-                                   "\n".join(problems), describe_lineup(ctx, action.payload), f"Run: {run_link()}"] if p)
-    print(body)
-    if ok and not problems:
-        email(ctx, f"GW{ctx.gw} final check: lineup updated", body)
+    success = ok and not problems
+    blocks = [] if success else [doc.Callout("Action needed", [
+        action.outcome if action.outcome.startswith(("FAILED", "not sent")) else "; ".join(problems),
+        doc.Tone(f"Make this change yourself on the FPL site before {ctx.local_deadline} ET.", bold=True)], "bad")]
+    blocks += context_blocks(ctx) + executor.describe([action], ctx.players, "Change")
+    if problems:
+        blocks.append(doc.Callout("Checked on FPL afterwards", problems, "bad"))
+    blocks += lineup_section(ctx, action.payload)
+    msg = message(ctx, f"GW{ctx.gw} final check: {'lineup updated' if success else 'ACTION NEEDED'}", blocks,
+                  alert=not success)
+    print(doc.to_text(msg))
+    if success:
+        email(ctx, f"GW{ctx.gw} final check: lineup updated", msg)
     else:
-        email(True, f"FPL ACTION NEEDED: GW{ctx.gw} final check couldn't update the lineup",
-              f"Make the change yourself on the FPL site (deadline {ctx.local_deadline} ET).\n\n{body}")
+        email(True, f"FPL ACTION NEEDED: GW{ctx.gw} final check couldn't update the lineup", msg)
     return ok and not problems, chip
 
 
@@ -439,9 +480,12 @@ def main():
     except Exception as problem:
         job = saved_schedule().get("running") if args.job == "tick" else args.job
         if job in ("preview", "main", "final") or (args.job == "tick" and near_deadline(now)):
-            email(True, f"FPL ACTION NEEDED: the bot's {job} run crashed",
-                  f"{type(problem).__name__}: {problem}\n\nIf the deadline is close, check your team on the FPL "
-                  f"site yourself.\n\nRun: {run_link()}\n\n{traceback.format_exc()}")
+            email(True, f"FPL ACTION NEEDED: the bot's {job} run crashed", doc.Message(
+                f"The bot's {job} run crashed", "Nothing after the crash was done", [("Needs you", "bad")], [
+                    doc.Callout("Action needed", [f"{type(problem).__name__}: {problem}", doc.Tone(
+                        "If the deadline is close, check your team on the FPL site yourself.", bold=True)], "bad"),
+                    doc.Callout("Where it failed", traceback.format_exc().splitlines()[-12:], None)],
+                footer=f"Run: {run_link()}", alert=True))
         raise
 
 

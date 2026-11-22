@@ -48,9 +48,9 @@ def load(gw, now):
         lines.append(f"WARNING: the Claude news check last ran {eastern(beat['last_run'])}; it may have stopped.")
     news = json.loads(NEWS.read_text()) if NEWS.exists() else None
     if not news or news.get("gw") != gw or now - pd.Timestamp(news["checked_at"]) > FRESH:
-        lines.insert(0, f"TEAM NEWS: no Claude news check for GW{gw} yet; using FPL's flags only.")
+        lines.insert(0, f"No Claude news check for GW{gw} yet: using FPL's injury flags only.")
         return overrides, lines
-    lines.insert(0, f"TEAM NEWS (Claude check, {eastern(news['checked_at'])})")
+    lines.insert(0, f"From the Claude news check at {eastern(news['checked_at'])} ET:")
     for player in news.get("players", []):
         chance = player.get("start_chance")
         if not isinstance(chance, (int, float)) or not 0 <= chance <= 1:

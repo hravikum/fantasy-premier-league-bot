@@ -2,8 +2,8 @@
 
 Runs one Fantasy Premier League team. Before every deadline it projects every player's expected
 points for the coming weeks, plans transfers, lineup, captain and chips, and makes the changes.
-Hits and chips wait for your OK. Everything is emailed, and anything that fails sends an
-**ACTION NEEDED** email so you can step in.
+Hits and chips wait for your OK. Everything is emailed (formatted HTML, with a plain-text copy),
+and anything that fails sends an **ACTION NEEDED** email so you can step in.
 
 ## Each gameweek
 
@@ -112,11 +112,13 @@ steps; the new secret takes over on the next run.
 | `dry-run` | The report, emailed |
 | `preview`, `main`, `final` | Runs that job now; respects `BOT_LIVE`; doesn't touch the schedule |
 | `check-write` | The no-op write check |
+| `explain` (with a player name) | Why the model rates him as it does, and what he'd add to your team |
 
 **Locally (read-only):**
 
 ```
 python3 recommend.py --team 1234567        # the report from public data
+python3 explain.py Haaland --team 1234567  # why the model rates a player as it does, and his value to your team
 python3 -m pytest -q                       # 42 tests, including preview → main → final against a fake FPL
 python3 backtest.py                        # projections vs. past gameweeks
 ```

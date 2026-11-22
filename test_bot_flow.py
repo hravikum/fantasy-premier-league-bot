@@ -95,7 +95,8 @@ def fpl(tmp_path, monkeypatch):
         monkeypatch.setattr(auth, "access_token", lambda: "token")
         monkeypatch.setattr(approvals, "check", lambda code, since: reply)
         server.emails = []
-        monkeypatch.setattr(mailer, "send", lambda subject, body: server.emails.append((subject, body)) or True)
+        monkeypatch.setattr(mailer, "send", lambda subject, body, html=None:
+                            server.emails.append((subject, body, html)) or True)
         for module, name in [(schedule, "STATE"), (approvals, "STATE"), (executor, "LOG"), (bot, "FLAGS"),
                              (news, "WATCHLIST"), (news, "NEWS"), (news, "HEARTBEAT")]:
             monkeypatch.setattr(module, name, tmp_path / f"{module.__name__}-{name}")
@@ -108,6 +109,8 @@ def test_preview_main_final(fpl):
     deadline = server.deadlines[GW]
     assert bot.tick(deadline - pd.Timedelta(hours=24), live=True) == "preview"
     assert server.posts == [] and "preview" in server.emails[-1][0]
+    assert "bar is" not in server.emails[-1][1]          # never plans transfers it would then refuse to make
+    assert "<table" in server.emails[-1][2]               # sent as HTML too
     assert news.WATCHLIST.exists()
 
     assert bot.tick(deadline - pd.Timedelta(hours=2), live=True) == "main"

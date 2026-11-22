@@ -98,7 +98,7 @@ def test_news_is_used_only_when_fresh_and_for_this_gameweek(tmp_path, monkeypatc
         {"id": 7, "name": "Rogers", "start_chance": 0.4, "reason": "Emery hinted at rotation", "source": "https://x"},
         {"id": 8, "name": "Junk", "start_chance": 3}]}))
     overrides, lines = news.load(12, now)
-    assert overrides == {7: 0.4} and "Rogers: 40% to start" in "\n".join(lines)
+    assert overrides == {7: 0.4} and "Rogers: 40% to start" in "\n".join(lines) and "news check at" in lines[0]
     assert news.load(13, now)[0] == {}                                   # another gameweek's news
     assert news.load(12, now + 30 * H)[0] == {}                          # too old
     news.HEARTBEAT.write_text(json.dumps({"last_run": (now - 40 * H).isoformat()}))

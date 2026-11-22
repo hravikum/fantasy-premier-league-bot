@@ -11,6 +11,7 @@ import pandas as pd
 
 import chips as chip_planner
 import data
+import doc
 import executor
 import model
 import optimizer
@@ -48,10 +49,12 @@ def plan_this_week(per_gw, players, team, gw, settings=optimizer.Settings()):
         return wait, wait, 0.0, 0
     best = optimizer.plan(*args, settings)
     wanted = len(best.weeks[0].transfers_in)
+    bar = executor.GAIN_PER_TRANSFER
     while best.weeks[0].transfers_in:
         count = len(best.weeks[0].transfers_in)
         fewer = wait if count == 1 else optimizer.plan(*args, replace(settings, transfer_limit={gw: count - 1}))
-        if best.objective - fewer.objective >= executor.GAIN_PER_TRANSFER:
+        # the last move earns its keep, and the whole set beats waiting by the bar for every move
+        if best.objective - fewer.objective >= bar and best.objective - wait.objective >= bar * count:
             break
         best = fewer
     return best, wait, best.objective - wait.objective, wanted - len(best.weeks[0].transfers_in)
@@ -87,66 +90,87 @@ def fixture_counts(fixtures, teams, gws):
 
 
 def report(analysis, per_gw, pf, players, fixtures, teams, team, horizon_gws):
+    """The weekly report as email blocks (doc.py)."""
     by_id = players.set_index("id")
-    name = lambda i: f"{by_id.loc[i, 'web_name']} ({by_id.loc[i, 'position']}, £{by_id.loc[i, 'price']:.1f})"
     base, first = analysis.base, analysis.base.weeks[0]
-    lines = [f"{team.name}: GW{first.gw} recommendations", ""]
-    lines.append(f"Bank £{team.bank:.1f}m, {team.free_transfers} free transfer(s). "
-                 f"Chips left this half (expire after GW{analysis.expires}): "
-                 + (", ".join(team_module.CHIPS[c] for c in analysis.chips) or "none"))
-    lines.append("")
+    span = f"next {len(horizon_gws)} GWs"
+    chips_left = ", ".join(team_module.CHIPS[c] for c in analysis.chips) or "none"
+    blocks = [doc.Heading(f"Transfers for GW{first.gw}" + (f" ({first.hits} hit, -{4 * first.hits})" if first.hits else ""))]
     if first.transfers_in:
-        lines.append(f"TRANSFERS for GW{first.gw}" + (f" ({first.hits} hit, -{4 * first.hits})" if first.hits else ""))
-        for out, inn in zip(first.transfers_out, first.transfers_in):
-            lines.append(f"  OUT {name(out)}  ->  IN {name(inn)}   "
-                         f"next {len(horizon_gws)} GWs: {per_gw.loc[out, horizon_gws].sum():.1f} -> "
-                         f"{per_gw.loc[inn, horizon_gws].sum():.1f} xP")
-        lines.append(f"  Making these moves now vs. waiting a week: {analysis.gain:+.1f} xP over the horizon "
-                     f"(each move adds at least {executor.GAIN_PER_TRANSFER:.0f})")
+        rows = [[f"{by_id.loc[o, 'web_name']} £{by_id.loc[o, 'price']:.1f}", "→",
+                 f"{by_id.loc[i, 'web_name']} £{by_id.loc[i, 'price']:.1f}", by_id.loc[i, "position"],
+                 f"{per_gw.loc[o, horizon_gws].sum():.1f} → {per_gw.loc[i, horizon_gws].sum():.1f}"]
+                for o, i in zip(first.transfers_out, first.transfers_in)]
+        blocks.append(doc.Table(["Out", "", "In", "Pos", f"xP, {span}"], rows, right={4}))
+        blocks.append(doc.Para([doc.Tone(f"{analysis.gain:+.1f} expected points", "good", bold=True),
+                                f" over the horizon vs. waiting a week (each move adds at least "
+                                f"{executor.GAIN_PER_TRANSFER:.0f})."]))
     else:
-        lines.append(f"TRANSFERS for GW{first.gw}: none. Banking the free transfer.")
+        blocks.append(doc.Para("None this week: banking the free transfer.", tone="muted"))
     if analysis.held_back:
-        lines.append(f"  {analysis.held_back} more move(s) added less than {executor.GAIN_PER_TRANSFER:.0f} xP each "
-                     "over waiting, so they wait.")
-    lines.append("")
-    lines.append(f"STARTING XI for GW{first.gw} (expected {first.xp:.1f} with captain)")
-    short = teams.set_index("id")["short_name"]
-    for i in first.xi:
-        tag = " (C)" if i == first.captain else " (VC)" if i == first.vice_captain else ""
-        fx = pf[(pf.id == i) & (pf.gw == first.gw)]
-        opp = ", ".join(f"{short[o]}{'(H)' if h else '(A)'}" for o, h in zip(fx.opp, fx.home)) or "no fixture"
-        flag = f"  [{by_id.loc[i, 'status']}: {by_id.loc[i, 'news']}]" if by_id.loc[i, "status"] != "a" else ""
-        lines.append(f"  {name(i):<34} {opp:<14} {per_gw.loc[i, first.gw]:>4.1f}{tag}{flag}")
-    lines.append("BENCH (in order): " + ", ".join(f"{by_id.loc[i, 'web_name']} {per_gw.loc[i, first.gw]:.1f}"
-                                                  for i in first.bench))
-    lines.append("")
-    lines.append("PLAN for the following weeks (re-planned every run)")
+        blocks.append(doc.Para(f"{analysis.held_back} more move(s) in the full plan added less than "
+                               f"{executor.GAIN_PER_TRANSFER:.0f} expected point each over waiting, so they wait.",
+                               tone="muted"))
+
+    blocks.append(doc.Heading(f"Starting XI for GW{first.gw}: {first.xp:.1f} expected with captain"))
+    blocks += lineup_blocks(first, per_gw, pf, players, teams)
+
+    blocks.append(doc.Heading("Plan for the following weeks"))
+    rows = []
     for week in base.weeks[1:]:
-        moves = ", ".join(f"{by_id.loc[o, 'web_name']} -> {by_id.loc[i, 'web_name']}"
-                          for o, i in zip(week.transfers_out, week.transfers_in)) or "no transfers"
-        lines.append(f"  GW{week.gw}: {moves}{f' ({week.hits} hit)' if week.hits else ''}; "
-                     f"captain {by_id.loc[week.captain, 'web_name']}; expected {week.xp:.1f}")
-    lines.append("")
+        moves = ", ".join(f"{by_id.loc[o, 'web_name']} → {by_id.loc[i, 'web_name']}"
+                          for o, i in zip(week.transfers_out, week.transfers_in)) or doc.Tone("no transfers", "muted")
+        rows.append([f"GW{week.gw}", [moves, doc.Badge(f"{week.hits} hit", "warn")] if week.hits else moves,
+                     by_id.loc[week.captain, "web_name"], f"{week.xp:.1f}"])
+    blocks.append(doc.Table(["", "Transfers", "Captain", "xP"], rows, right={3},
+                            note="Re-planned every run, so later weeks can change."))
     if analysis.chips:
-        lines.append(chip_planner.describe(analysis.chip_table, analysis.chip_plan, analysis.chip_proposal,
-                                           analysis.wildcard_gain))
+        blocks += chip_planner.describe(analysis.chip_table, analysis.chip_plan, analysis.chip_proposal,
+                                        analysis.wildcard_gain,
+                                        left=f"Left this half: {chips_left} (they expire after GW{analysis.expires}).")
     notes = fixture_counts(fixtures, teams, horizon_gws)
     if notes:
-        lines.append("Doubles/blanks: " + " | ".join(notes))
-    lines.append("")
-    lines.append(top_projections(per_gw[horizon_gws], players))
-    return "\n".join(lines)
+        blocks.append(doc.Para("Doubles and blanks: " + " | ".join(notes)))
+    blocks += top_projections(per_gw[horizon_gws], players)
+    return blocks
+
+
+def lineup_blocks(week, per_gw, pf, players, teams, chip=None):
+    """The XI (keeper first, then by position) with opponents and captain badges, then the bench."""
+    by_id = players.set_index("id")
+    short = teams.set_index("id")["short_name"]
+    order = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3}
+    rows, tones = [], {}
+    for n, i in enumerate(sorted(week.xi, key=lambda i: (order[by_id.loc[i, "position"]], -per_gw.loc[i, week.gw]))):
+        fx = pf[(pf.id == i) & (pf.gw == week.gw)]
+        opp = ", ".join(f"{short[o]} ({'H' if h else 'A'})" for o, h in zip(fx.opp, fx.home)) or "no match"
+        badge = [doc.Badge("TC" if chip == "3xc" else "C")] if i == week.captain else \
+            [doc.Badge("VC", "muted")] if i == week.vice_captain else []
+        name = [by_id.loc[i, "web_name"], *badge]
+        if by_id.loc[i, "status"] != "a":
+            name += [" ", doc.Tone(by_id.loc[i, "news"] or by_id.loc[i, "status"], "warn")]
+            tones[n] = "warn"
+        rows.append([name, by_id.loc[i, "position"], opp, f"{per_gw.loc[i, week.gw]:.1f}"])
+    bench = " · ".join(f"{by_id.loc[i, 'web_name']} {per_gw.loc[i, week.gw]:.1f}" for i in week.bench)
+    return [doc.Table(["Player", "Pos", "Opponent", "xP"], rows, right={3}, row_tones=tones),
+            doc.Para([doc.Tone("Bench" + (" (Bench Boost: they count)" if chip == "bboost" else "") + ": ", bold=True),
+                      bench])]
 
 
 def top_projections(per_gw, players, count=6):
     by_id = players.set_index("id")
     total = per_gw.sum(axis=1)
-    lines = [f"TOP PROJECTIONS by position, GW{per_gw.columns[0]}-{per_gw.columns[-1]}"]
+    rows = []
     for pos in ["GK", "DEF", "MID", "FWD"]:
         best = total.reindex(players[players.position == pos].id).nlargest(count)
-        lines.append(f"  {pos}: " + ", ".join(f"{by_id.loc[i, 'web_name']} £{by_id.loc[i, 'price']:.1f} {v:.1f}"
-                                              for i, v in best.items()))
-    return "\n".join(lines)
+        rows.append([pos, " · ".join(f"{by_id.loc[i, 'web_name']} £{by_id.loc[i, 'price']:.1f} ({v:.1f})"
+                                    for i, v in best.items())])
+    return [doc.Heading(f"Top projections, GW{per_gw.columns[0]}-{per_gw.columns[-1]}"),
+            doc.Table(["", "Expected points over the horizon"], rows)]
+
+
+def money(team):
+    return f"£{team.bank:.1f}m in the bank · {team.free_transfers} free transfer{'s' if team.free_transfers != 1 else ''}"
 
 
 def gameweeks(next_gw, team=None, horizon=HORIZON):
@@ -185,15 +209,17 @@ def main():
                                model.Params(start_ceiling=model.LIVE_START_CEILING))
     print(f"Loaded {len(season.players)} players, {len(season.history)} match rows; projecting GW{all_gws[0]}-{all_gws[-1]}")
     if my_team is None:
-        print(top_projections(per_gw[horizon_gws], season.players, count=10))
+        print(doc.to_text(doc.Message("Projections", blocks=top_projections(per_gw[horizon_gws], season.players, 10))))
         return
     analysis = analyse(per_gw, season.players, my_team, horizon_gws)
-    text = report(analysis, per_gw, pf, season.players, season.fixtures, season.teams, my_team, horizon_gws)
-    print(text)
+    deadline = upcoming.deadline_time.min().tz_convert("America/New_York").strftime("%a %d %b %H:%M")
+    message = doc.Message(f"GW{next_gw} plan", f"Deadline {deadline} ET · {my_team.name} · {money(my_team)} · public data",
+                          blocks=report(analysis, per_gw, pf, season.players, season.fixtures, season.teams,
+                                        my_team, horizon_gws))
+    print(doc.to_text(message))
     if args.email:
         import mailer
-        deadline = upcoming.deadline_time.min().tz_convert("America/New_York").strftime("%a %d %b %H:%M")
-        mailer.send(f"GW{next_gw} plan (deadline {deadline})", text)
+        mailer.send(f"GW{next_gw} plan (deadline {deadline})", doc.to_text(message), doc.to_html(message))
 
 
 if __name__ == "__main__":

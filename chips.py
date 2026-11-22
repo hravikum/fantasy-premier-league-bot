@@ -83,13 +83,27 @@ def propose(table, chips, gw, expires, wild=float("nan")):
     return (max(now, key=lambda c: table.loc[gw, c]) if now else None), plan
 
 
-def describe(table, plan, proposal, wild=float("nan")):
-    lines = ["CHIPS: extra expected points if played that week"]
-    lines.append(table.rename(columns=NAMES).round(1).to_string())
-    if plan:
-        lines.append("Best spread before they expire: " + ", ".join(
-            f"{NAMES[c]} GW{gw}" for c, gw in sorted(plan.items(), key=lambda kv: kv[1])))
+def describe(table, plan, proposal, wild=float("nan"), left=""):
+    """Email blocks: each chip's value per gameweek, the best spread, and this week's proposal."""
+    import doc
+    blocks = [doc.Heading("Chips")] + ([doc.Para(left, tone="muted")] if left else [])
+    if not table.empty:
+        chips = list(table.columns)
+        best = {c: table[c].idxmax() for c in chips}
+        rows = []
+        for gw, row in table.iterrows():
+            cells = [f"GW{gw}"]
+            for c in chips:
+                text = f"{row[c]:.1f}"
+                cells.append([doc.Tone(text, "good", bold=True), doc.Badge("plan", "good")] if plan.get(c) == gw
+                             else doc.Tone(text, bold=True) if best[c] == gw else text)
+            rows.append(cells)
+        blocks.append(doc.Table(["", *[NAMES[c] for c in chips]], rows, right=set(range(1, len(chips) + 1)),
+                                note="Extra expected points if played that week. 'plan' marks the best spread, "
+                                     "one chip a week, before they expire."))
     if wild == wild:
-        lines.append(f"Wildcard now: {wild:+.1f} xP over the horizon vs. the plan")
-    lines.append(f"Proposed this week: {NAMES[proposal]}" if proposal else "No chip proposed this week.")
-    return "\n".join(lines)
+        blocks.append(doc.Para(f"Wildcard now: {wild:+.1f} expected points over the horizon vs. the plan."))
+    blocks.append(doc.Para([doc.Tone("Proposed this week: ", bold=True), NAMES[proposal]] if proposal
+                           else "No chip proposed this week: none is clearly worth it yet.",
+                           tone=None if proposal else "muted"))
+    return blocks
