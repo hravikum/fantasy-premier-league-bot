@@ -12,7 +12,7 @@ FPL's next deadline and runs whichever job is due (`schedule.py`), once per game
 
 | When | Job | What happens |
 |---|---|---|
-| ~24 h before the deadline | **preview** | Emails the plan. Anything needing your OK (a hit, a chip) is listed: **reply YES** to approve it all, NO or no reply to skip. Writes the watchlist for the news check. Changes nothing. |
+| ~24 h before the deadline | **preview** | Emails the plan. Each hit or chip it wants is a numbered decision with its own **Yes / No** buttons (or reply "1 yes", "2 no"). Writes the watchlist for the news check. Changes nothing. |
 | a few hours before | **Claude news check** | A scheduled Claude task reads press conferences and predicted lineups for the watchlist players, and notes start chances that FPL's flags don't show yet. It runs every 6 hours and works only near a deadline. |
 | ~2 h before | **main run** | Logs in, applies the news and your reply, makes the changes, reads them back from FPL, and emails what it did. |
 | ~45 min before | **final check** | Re-checks injury news and fixes the lineup and captain if needed. If the main run failed, it runs it instead. Emails only if it changed or failed something. |
@@ -43,7 +43,7 @@ A failed main run is retried at the next tick, and the final check is a last ret
 - **Hybrid policy (`executor.py`)**:
   - Automatic: lineup, bench order, captain and vice-captain, and free transfers that clear the
     bar.
-  - Asks first: hits and chips.
+  - Asks first: hits and chips, each as its own decision.
   - A chip you play yourself on the site is kept. With your Wildcard or Free Hit active, the bot
     leaves transfers and lineup to you.
 
@@ -88,9 +88,17 @@ cd ~/Projects/fantasy-premier-league-bot && python3 -m venv .venv && .venv/bin/p
 .venv/bin/python3 timers.py --dry-run && .venv/bin/python3 timers.py
 ```
 
-**Approvals by reply** need IMAP access to Gmail with the same app password. If a main-run
-email says it couldn't read your reply, turn on IMAP in Gmail: Settings → Forwarding and
-POP/IMAP.
+**Decisions (`approvals.py`).** Each hit or chip is a separate decision.
+- **Buttons:** tap Yes or No. That starts an email to the bot, and you press Send.
+- **Typed replies:** reply to the preview with "1 yes" and "2 no" (or "yes to 1, no to 2", or just
+  "yes, no" in the order listed).
+- **No answer:** an unanswered decision counts as no.
+- **Changing your mind:** a later answer replaces an earlier one, until the main run.
+- **A bare "yes" with several decisions** is unclear and approves nothing; the main-run email says
+  so.
+
+The main run reads your answers over IMAP with the same Gmail app password. If a main-run email
+says it couldn't read them, turn on IMAP in Gmail: Settings → Forwarding and POP/IMAP.
 
 **Log in once.** FPL's login is PingOne OAuth, and scripted password logins are refused:
 1. Sign in at fantasy.premierleague.com in a **private window**.

@@ -21,6 +21,14 @@ class Badge:
 
 
 @dataclass
+class Button:
+    text: str
+    href: str
+    tone: str | None = None
+    plain: str = ""                # what plain text shows instead (the button is HTML only)
+
+
+@dataclass
 class Tone:
     text: str
     tone: str | None = None
@@ -76,6 +84,8 @@ def _text(part):
         return "".join(_text(p) for p in part)
     if isinstance(part, Badge):
         return f"({part.text})"
+    if isinstance(part, Button):
+        return part.plain
     if isinstance(part, Tone):
         return part.text
     return "" if part is None else str(part)
@@ -119,6 +129,11 @@ def _h(part):
         return (f'<span style="display:inline-block;background:{colour};color:#fff;border-radius:3px;'
                 f'padding:0 5px;font-size:11px;font-weight:700;line-height:17px;margin-left:4px">'
                 f'{html_lib.escape(part.text)}</span>')
+    if isinstance(part, Button):
+        colour = PURPLE if part.tone is None else TONES[part.tone]
+        return (f'<a href="{html_lib.escape(part.href, quote=True)}" style="display:inline-block;background:{colour};'
+                f'color:#ffffff;text-decoration:none;border-radius:4px;padding:3px 14px;font-size:13px;'
+                f'font-weight:700;margin:2px 6px 2px 0">{html_lib.escape(part.text)}</a>')
     if isinstance(part, Tone):
         weight = "font-weight:600;" if part.bold else ""
         return f'<span style="color:{TONES[part.tone]};{weight}">{html_lib.escape(part.text)}</span>'

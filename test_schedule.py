@@ -50,22 +50,47 @@ def reply(subject, body, sender="me@gmail.com"):
     return message
 
 
-def test_reading_your_reply():
-    owners = {"me@gmail.com"}
-    code = "fpl-abc123"
-    quoted = "\n\nOn Thu, 26 Nov 2026 at 13:43, me@gmail.com wrote:\n> NEEDS YOUR OK ... reply YES"
-    assert approvals.verdict([reply(f"Re: FPL: GW12 preview [{code}]", "Yes please" + quoted)], code, owners) == "yes"
-    assert approvals.verdict([reply(f"RE: FPL: GW12 preview [{code}]", "\n\nok" + quoted)], code, owners) == "yes"
-    assert approvals.verdict([reply(f"Re: FPL: GW12 preview [{code}]", "no thanks" + quoted)], code, owners) == "no"
-    assert approvals.verdict([reply(f"Re: FPL: GW12 preview [{code}]", "maybe?" + quoted)], code, owners) is None
-    # the preview itself (not a reply), someone else, another code, and only-quoted text don't count
-    assert approvals.verdict([reply(f"FPL: GW12 preview [{code}]", "YES")], code, owners) is None
-    assert approvals.verdict([reply(f"Re: FPL: GW12 preview [{code}]", "yes", "x@evil.com")], code, owners) is None
-    assert approvals.verdict([reply("Re: FPL: GW12 preview [fpl-zzz999]", "yes")], code, owners) is None
-    assert approvals.verdict([reply(f"Re: [{code}]", "> yes\n> quoted only")], code, owners) is None
-    # the latest answer wins
-    both = [reply(f"Re: [{code}]", "yes"), reply(f"Re: [{code}]", "no, changed my mind")]
-    assert approvals.verdict(both, code, owners) == "no"
+CODE = "fpl-abc123"
+OWNERS = {"me@gmail.com"}
+QUOTED = "\n\nOn Thu, 26 Nov 2026 at 13:43, me@gmail.com wrote:\n> 1. Take 1 hit ... 2. Play Bench Boost"
+RE = f"Re: FPL: GW12 preview, deadline Fri 27 Nov 13:30: 2 decisions for you [{CODE}]"
+
+
+def answers(*messages, count=2):
+    return approvals.verdicts(list(messages), CODE, OWNERS, count)
+
+
+def test_each_decision_gets_its_own_answer():
+    assert answers(reply(RE, "1 yes\n2 no" + QUOTED))[0] == {1: "yes", 2: "no"}
+    assert answers(reply(RE, "1: no, 2: yes please" + QUOTED))[0] == {1: "no", 2: "yes"}
+    assert answers(reply(RE, "#2 ok" + QUOTED))[0] == {2: "yes"}                      # 1 unanswered: skipped
+    assert answers(reply(RE, "No to 1, yes to 2" + QUOTED))[0] == {1: "no", 2: "yes"}
+    assert answers(reply(RE, "yes, no" + QUOTED))[0] == {1: "yes", 2: "no"}           # in the order listed
+    assert answers(reply(RE, "Yes" + QUOTED), count=1)[0] == {1: "yes"}               # one decision: plain yes
+
+
+def test_the_buttons():
+    button = lambda n, a: reply(f"FPL decision {CODE} #{n} {a.upper()}", f"{n} {a}")
+    assert answers(button(1, "yes"), button(2, "no"))[0] == {1: "yes", 2: "no"}
+    link = approvals.button_link(CODE, 2, "no")
+    assert link.startswith("mailto:") and "%232%20NO" in link and CODE in link
+
+
+def test_a_bare_yes_with_two_decisions_approves_nothing():
+    found, notes = answers(reply(RE, "yes" + QUOTED))
+    assert found == {} and "didn't say which decision" in notes[0]
+
+
+def test_later_answers_win_and_strangers_dont_count():
+    assert answers(reply(RE, "1 yes 2 yes"), reply(RE, "2 no, changed my mind"))[0] == {1: "yes", 2: "no"}
+    assert answers(reply(RE, "1 yes", sender="x@evil.com"))[0] == {}
+    assert answers(reply(RE.replace(CODE, "fpl-zzz999"), "1 yes"))[0] == {}
+    # the bot's own email (it contains the code and words like "yes") is never an answer
+    assert answers(reply(f"FPL: GW12 preview: 2 decisions for you [{CODE}]", "1 yes 2 yes"))[0] == {}
+    # only the quoted preview, nothing typed: no answer
+    assert answers(reply(RE, "> 1 yes\n> 2 no"))[0] == {}
+    # Gmail sometimes splits the "On ... wrote:" line in two
+    assert answers(reply(RE, "2 yes\n\nOn Thu, Nov 26, 2026 at 1:43 PM Hari <\nme@gmail.com> wrote:\n1 yes"))[0] == {2: "yes"}
 
 
 def test_chips_spread_one_a_week_and_wait_unless_worth_it():

@@ -177,14 +177,19 @@ def preview(ctx):
     a = recommend.analyse(ctx.per_gw, ctx.players, ctx.team, ctx.horizon_gws)
     first = a.base.weeks[0]
     name = ctx.players.set_index("id")["web_name"]
-    asks = []
+    decisions = []
     if first.hits:
-        moves = ", ".join(f"{name[o]} -> {name[i]}" for o, i in zip(first.transfers_out, first.transfers_in))
-        asks.append(f"Transfers with {first.hits} hit(s), -{4 * first.hits} points: {moves}")
+        moves = ", ".join(f"{name[o]} → {name[i]}" for o, i in zip(first.transfers_out, first.transfers_in))
+        decisions.append({"kind": "transfers", "in": first.transfers_in, "out": first.transfers_out, "hits": first.hits,
+                          "text": f"Take {first.hits} hit{'s' if first.hits > 1 else ''} (-{4 * first.hits}) "
+                                  f"for these transfers: {moves}"})
     if a.chip_proposal:
         value = a.wildcard_gain if a.chip_proposal == "wildcard" else a.chip_table.loc[ctx.gw, a.chip_proposal]
-        asks.append(f"Play {chips.NAMES[a.chip_proposal]} this week (about {value:+.1f} expected points)")
-    # What the main run does if you don't reply: no hits, no chip.
+        decisions.append({"kind": "chip", "chip": a.chip_proposal,
+                          "text": f"Play {chips.NAMES[a.chip_proposal]} this week (about {value:+.1f} expected points)"})
+    for n, decision in enumerate(decisions, start=1):
+        decision["n"] = n
+    # What the main run does if you say no to everything: no hits, no chip.
     if first.hits:
         base, wait, gain, _ = recommend.plan_this_week(ctx.plan_xp, ctx.players, ctx.team, ctx.gw,
                                                        optimizer.Settings(max_hits=0))
@@ -192,42 +197,53 @@ def preview(ctx):
     else:
         default = executor.decide(ctx.team, first, a.wait.weeks[0], a.gain, ctx.players)
     code = None
-    if asks:
+    if decisions:
         code = approvals.new_code()
-        approvals.save({"gw": ctx.gw, "code": code, "created": ctx.now.isoformat(), "chip": a.chip_proposal,
-                        "transfers": {"in": first.transfers_in, "out": first.transfers_out} if first.hits else None,
-                        "asks": asks})
+        approvals.save({"gw": ctx.gw, "code": code, "created": ctx.now.isoformat(), "decisions": decisions})
     later = [i for w in a.base.weeks[:2] for i in w.transfers_in]
     news.write_watchlist(ctx.gw, ctx.deadline, list(ctx.team.squad) + later, ctx.players, ctx.season.teams)
 
     blocks = context_blocks(ctx)
-    if asks:
-        blocks.append(doc.Callout("Needs your OK", [f"• {ask}" for ask in asks] + [
-            doc.Tone("Reply YES to this email to approve all of it. Reply NO, or don't reply, to skip it. "
-                     "Your reply has to arrive before the main run, about 2 hours before the deadline.", bold=True)],
-            "warn"))
+    if decisions:
+        lines = []
+        for d in decisions:
+            lines.append([doc.Tone(f"{d['n']}. ", bold=True), d["text"]])
+            lines.append([doc.Button("Yes", approvals.button_link(code, d["n"], "yes"), "good",
+                                     plain=f"   reply \"{d['n']} yes\" or \"{d['n']} no\""),
+                          doc.Button("No", approvals.button_link(code, d["n"], "no"), "bad")])
+        lines.append(doc.Tone("Answer each one: tap Yes or No (it starts an email to the bot; press Send), or reply "
+                              "with \"1 yes\", \"2 no\". Anything you don't answer is skipped, and a later answer "
+                              "replaces an earlier one, until the main run about 2 hours before the deadline.",
+                              "muted"))
+        blocks.append(doc.Callout(f"{len(decisions)} decision{'s' if len(decisions) > 1 else ''} for you", lines, "warn"))
     blocks += executor.describe(default, ctx.players, "At the main run (about 2 hours before the deadline)"
-                                + (", without your OK" if asks else ""))
+                                + ("" if not decisions else ", if you say no" if len(decisions) == 1
+                                   else ", if you say no to everything"))
     blocks += recommend.report(a, ctx.per_gw, ctx.pf, ctx.players, ctx.season.fixtures, ctx.season.teams,
                                ctx.team, ctx.horizon_gws)
     msg = message(ctx, f"GW{ctx.gw} preview", blocks)
     print(doc.to_text(msg))
     subject = f"GW{ctx.gw} preview, deadline {ctx.local_deadline}"
-    email(ctx, subject + (f": reply YES to approve [{code}]" if code else ""), msg)
+    if decisions:
+        subject += f": {len(decisions)} decision{'s' if len(decisions) > 1 else ''} for you [{code}]"
+    email(ctx, subject, msg)
     return True
 
 
-def approved_actions(ctx, proposal, answer, notes):
-    """The actions for this week when you replied YES, or None to fall back to the no-approval plan."""
-    if answer != "yes":
+def approved_actions(ctx, approved, notes):
+    """The actions for this week given the decisions you said yes to ({kind: decision}), or
+    (None, None) to fall back to the no-approval plan."""
+    if not approved:
         return None, None
     team, players, gw = ctx.team, ctx.players, ctx.gw
     available, _ = team.chips_available(gw)
-    chip = proposal.get("chip") if proposal.get("chip") in available else None
+    chip = approved["chip"]["chip"] if "chip" in approved and approved["chip"]["chip"] in available else None
     settings = optimizer.Settings(max_hits=0, triple_captain_gw=gw if chip == "3xc" else None,
                                   bench_boost_gw=gw if chip == "bboost" else None)
     args = (ctx.plan_xp, players, team.squad, team.bank, team.free_transfers, team.sell_prices)
     if chip in TRANSFER_CHIPS:
+        if "transfers" in approved:
+            notes.append(f"The {chips.NAMES[chip]} replaces the transfers you approved: it re-picks the squad.")
         xp = ctx.per_gw[[gw]] if chip == "freehit" else ctx.plan_xp
         plan = optimizer.plan(xp, *args[1:], optimizer.Settings(wildcard_gw=gw, ft_value=0 if chip == "freehit" else 1.5))
         week = plan.weeks[0]
@@ -237,7 +253,7 @@ def approved_actions(ctx, proposal, answer, notes):
                                            executor.transfers_payload(team.entry, week, players, team.sell_prices, chip)))
         actions.append(executor.lineup_action(team, week, players))
         return actions, chip
-    wanted = proposal.get("transfers")
+    wanted = approved.get("transfers")
     if wanted:
         ins, outs = wanted["in"], wanted["out"]
         by_id = players.set_index("id")
@@ -250,10 +266,10 @@ def approved_actions(ctx, proposal, answer, notes):
                 return [executor.Action("transfers", "approved", f"{week.hits} hit(s) (you approved)", "transfers/",
                                         executor.transfers_payload(team.entry, week, players, team.sell_prices)),
                         executor.lineup_action(team, week, players, chip)], chip
-            notes.append("The transfers you approved no longer beat the free-transfer plan on today's data, "
+            notes.append("The hit transfers you approved no longer beat the free-transfer plan on today's data, "
                          "so they weren't made.")
         else:
-            notes.append("The transfers you approved can't be made as approved (a player is now doubtful or "
+            notes.append("The hit transfers you approved can't be made as approved (a player is now doubtful or "
                          "already moved), so they weren't made.")
     if chip:
         base, wait, gain, _ = recommend.plan_this_week(ctx.plan_xp, players, team, gw, settings)
@@ -264,19 +280,26 @@ def approved_actions(ctx, proposal, answer, notes):
 def main_run(ctx, job="main"):
     """The changes for the coming deadline. Returns (ok, chip played)."""
     log_flags(ctx, job)
-    notes, proposal, answer = [], approvals.load(ctx.gw), None
-    if proposal:
+    notes, proposal = [], approvals.load(ctx.gw)
+    decisions = proposal["decisions"] if proposal else []
+    answers = {}
+    if decisions:
         try:
-            answer = approvals.check(proposal["code"], pd.Timestamp(proposal["created"]))
-            notes.append({"yes": "You approved the preview's request.", "no": "You declined the preview's request.",
-                          None: "No reply to the preview's request, so it was skipped."}[answer])
+            answers, unclear = approvals.check(proposal["code"], pd.Timestamp(proposal["created"]), len(decisions))
+            notes += unclear
         except Exception as problem:
-            notes.append(f"Couldn't read your reply ({type(problem).__name__}: {problem}), so the request was skipped.")
+            notes.append(f"Couldn't read your answers ({type(problem).__name__}: {problem}), so every decision "
+                         "was treated as no.")
+    said = {"yes": "you said yes", "no": "you said no", None: "no answer, so no"}
+    for d in decisions:
+        notes.append(f"{d['n']}. {d['text']}: {said[answers.get(d['n'])]}.")
+    approved = {d["kind"]: d for d in decisions if answers.get(d["n"]) == "yes"}
     active = ctx.team.active_chip
     if active:
         notes.append(f"You've already played {chips.NAMES.get(active, active)} this gameweek; the bot keeps it.")
-        answer = None if answer == "yes" and proposal and proposal.get("chip") else answer
-    actions, chip = approved_actions(ctx, proposal or {}, answer, notes)
+        if approved.pop("chip", None):
+            notes.append("So the chip you approved wasn't played: one chip a gameweek.")
+    actions, chip = approved_actions(ctx, approved, notes)
     if actions is None and active in TRANSFER_CHIPS:
         notes.append("With that chip active, transfers and the lineup are left to you.")
         actions, chip = [], active
@@ -306,7 +329,7 @@ def main_run(ctx, job="main"):
             "bad"))
     blocks += context_blocks(ctx)
     if notes:
-        blocks.append(doc.Callout("Your requests and chips", notes, "info"))
+        blocks.append(doc.Callout("Your decisions and chips", notes, "info"))
     blocks += executor.describe(actions, ctx.players, "Changes")
     if problems:
         blocks.append(doc.Callout("Checked on FPL afterwards", problems, "bad"))

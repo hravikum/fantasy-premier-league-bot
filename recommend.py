@@ -106,7 +106,8 @@ def report(analysis, per_gw, pf, players, fixtures, teams, team, horizon_gws):
                                 f" over the horizon vs. waiting a week (each move adds at least "
                                 f"{executor.GAIN_PER_TRANSFER:.0f})."]))
     else:
-        blocks.append(doc.Para("None this week: banking the free transfer.", tone="muted"))
+        blocks.append(doc.Para("None this week" + (": banking the free transfer." if team.free_transfers else "."),
+                               tone="muted"))
     if analysis.held_back:
         blocks.append(doc.Para(f"{analysis.held_back} more move(s) in the full plan added less than "
                                f"{executor.GAIN_PER_TRANSFER:.0f} expected point each over waiting, so they wait.",

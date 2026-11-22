@@ -93,7 +93,7 @@ def fpl(tmp_path, monkeypatch):
         monkeypatch.setattr(data, "get", server.get)
         monkeypatch.setattr(data, "post", server.post)
         monkeypatch.setattr(auth, "access_token", lambda: "token")
-        monkeypatch.setattr(approvals, "check", lambda code, since: reply)
+        monkeypatch.setattr(approvals, "check", lambda code, since, count: (reply or {}, []))
         server.emails = []
         monkeypatch.setattr(mailer, "send", lambda subject, body, html=None:
                             server.emails.append((subject, body, html)) or True)
@@ -147,15 +147,23 @@ def test_refusal_emails_action_needed_and_final_retries(fpl):
     assert {"main", "final"} <= set(schedule.load(GW, deadline)["done"])
 
 
-def test_approved_bench_boost_is_played(fpl):
-    server = fpl(reply="yes")
+def test_no_to_the_hit_yes_to_the_chip(fpl):
+    server = fpl(reply={1: "no", 2: "yes"})
     deadline = server.deadlines[GW]
+    squad = [p["element"] for p in server.picks]
+    outsider = next(int(i) for i in server.players.sort_values("total_points", ascending=False).id if i not in squad)
     approvals.save({"gw": GW, "code": "fpl-000000", "created": (deadline - pd.Timedelta(hours=24)).isoformat(),
-                    "chip": "bboost", "transfers": None, "asks": ["Play Bench Boost"]})
+                    "decisions": [
+                        {"n": 1, "kind": "transfers", "in": [outsider], "out": [squad[5]], "hits": 1, "text": "Take 1 hit"},
+                        {"n": 2, "kind": "chip", "chip": "bboost", "text": "Play Bench Boost"}]})
     assert bot.tick(deadline - pd.Timedelta(hours=2), live=True) == "main"
     lineup = [payload for path, payload in server.posts if path == "my-team/99/"][-1]
     assert lineup["chip"] == "bboost"
+    assert all(outsider not in [t["element_in"] for t in payload["transfers"]]
+               for path, payload in server.posts if path == "transfers/")
     assert schedule.load(GW, deadline)["chip"] == "bboost"
+    body = server.emails[-1][1]
+    assert "1. Take 1 hit: you said no" in body and "2. Play Bench Boost: you said yes" in body
 
 
 def test_a_chip_you_played_yourself_is_kept(fpl):
