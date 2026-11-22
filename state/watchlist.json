@@ -1,0 +1,177 @@
+{
+ "gw": 12,
+ "deadline": "2026-11-27T18:30:00+00:00",
+ "players": [
+  {
+   "id": 496,
+   "name": "Kinsky",
+   "team": "Spurs",
+   "position": "GK",
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
+  },
+  {
+   "id": 504,
+   "name": "Vuskovic",
+   "team": "Brighton",
+   "position": "DEF",
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
+  },
+  {
+   "id": 229,
+   "name": "Tarkowski",
+   "team": "Everton",
+   "position": "DEF",
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
+  },
+  {
+   "id": 8,
+   "name": "Calafiori",
+   "team": "Arsenal",
+   "position": "DEF",
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
+  },
+  {
+   "id": 68,
+   "name": "Tavernier",
+   "team": "Bournemouth",
+   "position": "MID",
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
+  },
+  {
+   "id": 366,
+   "name": "Wirtz",
+   "team": "Liverpool",
+   "position": "MID",
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
+  },
+  {
+   "id": 542,
+   "name": "E.Le F\u00e9e",
+   "team": "Sunderland",
+   "position": "MID",
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
+  },
+  {
+   "id": 40,
+   "name": "Rogers",
+   "team": "Chelsea",
+   "position": "MID",
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
+  },
+  {
+   "id": 166,
+   "name": "N.Jackson",
+   "team": "Aston Villa",
+   "position": "FWD",
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
+  },
+  {
+   "id": 79,
+   "name": "Evanilson",
+   "team": "Bournemouth",
+   "position": "FWD",
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
+  },
+  {
+   "id": 379,
+   "name": "Isak",
+   "team": "Liverpool",
+   "position": "FWD",
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
+  },
+  {
+   "id": 1,
+   "name": "Raya",
+   "team": "Arsenal",
+   "position": "GK",
+   "fpl_status": "d",
+   "fpl_chance": 75.0,
+   "fpl_news": "Shoulder injury - 75% chance of playing"
+  },
+  {
+   "id": 627,
+   "name": "Barcola",
+   "team": "Liverpool",
+   "position": "MID",
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
+  },
+  {
+   "id": 31,
+   "name": "Konsa",
+   "team": "Arsenal",
+   "position": "DEF",
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
+  },
+  {
+   "id": 534,
+   "name": "Hume",
+   "team": "Sunderland",
+   "position": "DEF",
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
+  },
+  {
+   "id": 385,
+   "name": "Trafford",
+   "team": "Leeds",
+   "position": "GK",
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
+  },
+  {
+   "id": 124,
+   "name": "Gro\u00df",
+   "team": "Brighton",
+   "position": "MID",
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
+  },
+  {
+   "id": 183,
+   "name": "Rudoni",
+   "team": "Coventry City",
+   "position": "MID",
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
+  },
+  {
+   "id": 411,
+   "name": "Haaland",
+   "team": "Man City",
+   "position": "FWD",
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
+  }
+ ]
+}
