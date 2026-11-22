@@ -1,0 +1,40 @@
+name: Recommend
+
+# Phase 1: read-only. Runs the tests, then builds this week's recommendations from the live FPL API
+# and emails them. Start it from the Actions tab (Run workflow) or the GitHub mobile app.
+# Phase 4 adds the deadline timers (cron-job.org, as for the ESPN bot) and the write steps.
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: Email the report
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+
+concurrency:
+  group: fpl
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TZ: America/New_York
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt pytest
+      - run: python -m pytest -q
+      - name: Recommendations
+        run: python recommend.py ${FPL_TEAM_ID:+--team "$FPL_TEAM_ID"} ${{ (github.event_name == 'workflow_dispatch' && inputs.email) && '--email' || '' }}
+        env:
+          FPL_TEAM_ID: ${{ vars.FPL_TEAM_ID }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
