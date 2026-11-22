@@ -119,8 +119,9 @@ def load_archive(season):
 
 # ---------------------------------------------------------------- live API (current season)
 
-def get(path, session=None, **kwargs):
-    response = (session or requests).get(API + path, headers=HEADERS, timeout=30, **kwargs)
+def get(path, session=None, token=None, **kwargs):
+    headers = dict(HEADERS, **({"X-API-Authorization": f"Bearer {token}"} if token else {}))
+    response = (session or requests).get(API + path, headers=headers, timeout=30, **kwargs)
     response.raise_for_status()
     return response.json()
 

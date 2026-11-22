@@ -1,7 +1,8 @@
 """Your FPL team from the public endpoints: squad, bank, free transfers, selling prices, chips.
 
-Public data shows the squad as of the last deadline. Transfers you've made since then only show
-up once the bot can log in (phase 3), so run this before making moves on the site.
+load() uses public data, which shows the squad as of the last deadline. load_private() logs in
+and reads my-team: the squad right now (with pending transfers), exact selling prices, the free
+transfers left this week and the current lineup.
 """
 import math
 from dataclasses import dataclass, field
@@ -21,6 +22,8 @@ class Team:
     free_transfers: int
     sell_prices: dict
     chips_used: list = field(default_factory=list)      # (chip, gameweek)
+    picks: list = field(default_factory=list)           # the current lineup, when logged in
+    transfers_open: bool = True                         # False while a Wildcard/Free Hit is active
 
     def chips_available(self, gw):
         first, last = next(h for h in HALVES if h[0] <= gw <= h[1])
@@ -67,3 +70,20 @@ def load(entry_id, players):
     by_id = players.set_index("id")
     sell = {i: selling_price(bought.get(i, by_id.loc[i, "start_price"]), by_id.loc[i, "price"]) for i in squad}
     return Team(entry_id, entry["name"], squad, bank, free_transfers(weeks, chips), sell, chips)
+
+
+def load_private(token, players):
+    me = data.get("me/", token=token)["player"]
+    entry = me["entry"]
+    mine = data.get(f"my-team/{entry}/", token=token)
+    public = data.get(f"entry/{entry}/history/")
+    picks = sorted(mine["picks"], key=lambda p: p["position"])
+    transfers = mine["transfers"]
+    limit = transfers.get("limit")
+    return Team(
+        entry=entry, name=data.get(f"entry/{entry}/")["name"],
+        squad=[p["element"] for p in picks], bank=transfers["bank"] / 10,
+        free_transfers=0 if limit is None else min(max(limit - transfers.get("made", 0), 0), 5),
+        sell_prices={p["element"]: p["selling_price"] / 10 for p in picks},
+        chips_used=[(c["name"], c["event"]) for c in public["chips"]],
+        picks=picks, transfers_open=limit is not None)

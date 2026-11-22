@@ -66,6 +66,8 @@ def test_rules_hold_every_week():
         check_rules(week, players, current)
         assert len(week.transfers_in) == len(week.transfers_out)
         assert len(week.transfers_in) <= week.free_transfers + week.hits
+        pos = players.set_index("id")["position"]
+        assert [pos[i] for i in week.transfers_out] == [pos[i] for i in week.transfers_in]   # like-for-like pairs
 
 
 def test_buys_an_obvious_upgrade_with_a_free_transfer():
@@ -124,6 +126,28 @@ def test_bench_boost_and_triple_captain_count():
     bench_pts = sum(xp.loc[i, GWS[0]] for i in plain.weeks[0].bench)
     assert abs(boosted.weeks[0].xp - (plain.weeks[0].xp + bench_pts)) < 0.02
     assert abs(boosted.weeks[1].xp - (plain.weeks[1].xp + xp.loc[plain.weeks[1].captain, GWS[1]])) < 0.02
+
+
+def test_pairs_are_like_for_like_when_buying_across_positions():
+    players, xp = make_pool()
+    squad = cheapest_squad(players)
+    # A great keeper and a great forward to buy: the plan must sell a keeper and a forward for them.
+    gk = players[(players.position == "GK") & ~players.id.isin(squad)].iloc[0]["id"]
+    fw = players[(players.position == "FWD") & ~players.id.isin(squad)].iloc[0]["id"]
+    xp.loc[[gk, fw]] = 12.0
+    players.loc[players.id.isin([gk, fw]), "price"] = 4.0
+    week = optimizer.plan(xp, players, squad, bank=0.0, free_transfers=2).weeks[0]
+    pos = players.set_index("id")["position"]
+    assert set(week.transfers_in) == {gk, fw}
+    assert [pos[i] for i in week.transfers_out] == [pos[i] for i in week.transfers_in]
+
+
+def test_frozen_week_has_no_transfers():
+    players, xp = make_pool()
+    squad = cheapest_squad(players)
+    result = optimizer.plan(xp, players, squad, bank=20.0, free_transfers=3,
+                            settings=optimizer.Settings(frozen_gws={GWS[0]}))
+    assert result.weeks[0].transfers_in == [] and result.weeks[0].hits == 0
 
 
 if __name__ == "__main__":

@@ -30,6 +30,7 @@ class Settings:
     triple_captain_gw: int | None = None
     locked: set = field(default_factory=set)   # never sell
     banned: set = field(default_factory=set)   # never buy
+    frozen_gws: set = field(default_factory=set)   # no transfers in these gameweeks
     time_limit: float = 120.0
 
 
@@ -158,6 +159,8 @@ def plan(xp, players, squad, bank, free_transfers, sell_prices=None, settings=Se
         constrain(row, 0, 0)
         constrain({used[t]: 1, ft[t]: -1}, -np.inf, 0)
         constrain({ft[t + 1]: 1, ft[t]: -1, used[t]: 1, waste[t]: 1}, 1, 1)
+        if gw in settings.frozen_gws:
+            constrain({tin[t][i]: 1 for i in range(n)}, 0, 0)
         if gw == settings.wildcard_gw:
             constrain({paid[t]: 1}, 0, 0)
         else:
@@ -188,13 +191,25 @@ def plan(xp, players, squad, bank, free_transfers, sell_prices=None, settings=Se
         pos_of = pool.set_index("id")["position"]
         bench = ([i for i in bench_ids if pos_of[i] == "GK"]
                  + sorted([i for i in bench_ids if pos_of[i] != "GK"], key=lambda i: -pts[ids.tolist().index(i), t]))
-        captain = ids[sol[c[t]] == 1][0]
+        xi = [int(i) for i in xi]
+        captain = int(ids[sol[c[t]] == 1][0])
         vice = next(i for i in xi if i != captain)
         mult = 3 if gw == settings.triple_captain_gw else 2
         team_xp = sum(pts[ids.tolist().index(i), t] for i in (squad_now if gw == settings.bench_boost_gw else xi))
         team_xp += (mult - 1) * pts[ids.tolist().index(captain), t]
+        outs, ins = _pair_by_position(ids[sol[tout[t]] == 1], ids[sol[tin[t]] == 1], pos_of)
         weeks.append(Week(
-            gw=gw, transfers_in=list(ids[sol[tin[t]] == 1]), transfers_out=list(ids[sol[tout[t]] == 1]),
+            gw=gw, transfers_in=ins, transfers_out=outs,
             hits=int(sol[paid[t]]), free_transfers=int(sol[ft[t]]), bank=round(float(money_path[t]), 1),
-            xi=list(xi), bench=bench, captain=int(captain), vice_captain=int(vice), xp=round(float(team_xp), 2)))
+            xi=xi, bench=[int(i) for i in bench], captain=int(captain), vice_captain=int(vice), xp=round(float(team_xp), 2)))
     return Plan(weeks, -result.fun, result.message)
+
+
+def _pair_by_position(outs, ins, pos_of):
+    """FPL takes transfers as like-for-like pairs, so line each sale up with a purchase in the same
+    position: transfers_out[k] is replaced by transfers_in[k]."""
+    paired_out, paired_in = [], []
+    for pos in QUOTA:
+        paired_out += sorted(int(i) for i in outs if pos_of[i] == pos)
+        paired_in += sorted(int(i) for i in ins if pos_of[i] == pos)
+    return paired_out, paired_in

@@ -64,11 +64,14 @@ def build(per_gw, pf, players, fixtures, teams, team, horizon_gws):
     by_id = players.set_index("id")
     name = lambda i: f"{by_id.loc[i, 'web_name']} ({by_id.loc[i, 'position']}, £{by_id.loc[i, 'price']:.1f})"
     chips, expires = team.chips_available(horizon_gws[0])
-    base = optimizer.plan(per_gw, players, team.squad, team.bank, team.free_transfers, team.sell_prices)
-    if not base.weeks:
-        return f"Optimizer found no plan: {base.status}", base
-    hold = optimizer.plan(per_gw, players, team.squad, team.bank, team.free_transfers, team.sell_prices,
-                          optimizer.Settings(max_hits=0, ft_value=0, locked=set(team.squad)))
+    this_week = {horizon_gws[0]}
+    wait = optimizer.plan(per_gw, players, team.squad, team.bank, team.free_transfers, team.sell_prices,
+                          optimizer.Settings(frozen_gws=this_week))
+    # While a Wildcard or Free Hit is active, this week's transfers are left to you.
+    base = (optimizer.plan(per_gw, players, team.squad, team.bank, team.free_transfers, team.sell_prices)
+            if team.transfers_open else wait)
+    if not base.weeks or not wait.weeks:
+        raise RuntimeError(f"Optimizer found no plan: {base.status} / {wait.status}")
     wildcard = None
     if "wildcard" in chips:
         wildcard = optimizer.plan(per_gw, players, team.squad, team.bank, team.free_transfers,
@@ -81,12 +84,12 @@ def build(per_gw, pf, players, fixtures, teams, team, horizon_gws):
                  + (", ".join(team_module.CHIPS[c] for c in chips) or "none"))
     lines.append("")
     if first.transfers_in:
-        gain = base.objective - hold.objective
+        gain = base.objective - wait.objective
         lines.append(f"TRANSFERS for GW{first.gw}" + (f" ({first.hits} hit, -{4 * first.hits})" if first.hits else ""))
         for out, inn in zip(first.transfers_out, first.transfers_in):
             lines.append(f"  OUT {name(out)}  ->  IN {name(inn)}   "
                          f"next {len(horizon_gws)} GWs: {per_gw.loc[out].sum():.1f} -> {per_gw.loc[inn].sum():.1f} xP")
-        lines.append(f"  Plan value vs. no transfers over the horizon: {gain:+.1f} xP (discounted)")
+        lines.append(f"  Making these moves now vs. waiting a week: {gain:+.1f} xP over the horizon")
     else:
         lines.append(f"TRANSFERS for GW{first.gw}: none. Banking the free transfer.")
     lines.append("")
@@ -119,7 +122,8 @@ def build(per_gw, pf, players, fixtures, teams, team, horizon_gws):
         lines.append("Doubles/blanks: " + " | ".join(notes))
     lines.append("")
     lines.append(top_projections(per_gw, players))
-    return "\n".join(lines), base
+    gain = base.objective - wait.objective
+    return "\n".join(lines), base, wait, gain
 
 
 def top_projections(per_gw, players, count=6):
@@ -159,7 +163,7 @@ def main():
     my_team = team_module.load(args.team, season.players)
     if args.ft is not None:
         my_team = replace(my_team, free_transfers=args.ft)
-    text, _ = build(per_gw, pf, season.players, season.fixtures, season.teams, my_team, gws)
+    text = build(per_gw, pf, season.players, season.fixtures, season.teams, my_team, gws)[0]
     print(text)
     if args.email:
         import mailer

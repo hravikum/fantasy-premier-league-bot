@@ -1,0 +1,46 @@
+name: Bot
+
+# Phase 3: a dry run. Tests, then the bot logs in (if FPL_REFRESH_TOKEN is set), plans the week and
+# shows exactly what it would change on FPL, without sending anything. Start it from the Actions
+# tab or the GitHub app (Run workflow); every push to main runs it too, without the email.
+# Phase 4 adds the deadline timers (cron-job.org, as for the ESPN bot) and the live writes.
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: Email the report
+        type: boolean
+        default: true
+  push:
+    branches: [main]
+
+permissions:
+  contents: write     # to save the encrypted login token to the bot-state branch
+
+concurrency:
+  group: fpl          # one run at a time: two runs would both try to rotate the login token
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TZ: America/New_York
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt pytest
+      - run: python -m pytest -q
+      - name: Bot (dry run)
+        run: bash hosted_run.sh ${{ (github.event_name == 'workflow_dispatch' && inputs.email) && '--email' || '' }}
+        env:
+          FPL_TEAM_ID: ${{ vars.FPL_TEAM_ID }}
+          FPL_REFRESH_TOKEN: ${{ secrets.FPL_REFRESH_TOKEN }}
+          FPL_STATE_KEY: ${{ secrets.FPL_STATE_KEY }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}

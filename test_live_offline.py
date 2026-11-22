@@ -27,9 +27,16 @@ def fake_api(entry_squad, entry_transfers):
                               "chips": [{"name": "bboost", "event": 5}]},
         "entry/99/event/6/picks/": {"picks": picks, "entry_history": {"bank": 13}},
         "entry/99/transfers/": entry_transfers,
+        "me/": {"player": {"entry": 99}},
+        "my-team/99/": {"picks": [{"element": e, "position": k + 1, "is_captain": k == 5, "is_vice_captain": k == 6,
+                                   "multiplier": 2 if k == 5 else 1 if k < 11 else 0,
+                                   "selling_price": 50 + k, "purchase_price": 50}
+                                  for k, e in reversed(list(enumerate(entry_squad)))],
+                        "chips": [], "transfers": {"cost": 4, "status": "cost", "limit": 3, "made": 1,
+                                                   "bank": 21, "value": 1003}},
     }
 
-    def get(path, session=None, **kwargs):
+    def get(path, session=None, token=None, **kwargs):
         if path.startswith("element-summary/"):
             return {"history": by_element.get(int(path.split("/")[1]), [])}
         return responses[path]
@@ -49,6 +56,7 @@ def test_live_loaders_on_archive_shaped_responses():
     try:
         season = data.load_live()
         my_team = team.load(99, season.players)
+        private = team.load_private("token", season.players)
     finally:
         data.get = original
 
@@ -60,6 +68,10 @@ def test_live_loaders_on_archive_shaped_responses():
     now = season.players.set_index("id").loc[bought, "price"]
     assert my_team.sell_prices[bought] == team.selling_price(4.5, now)
     assert my_team.chips_available(7) == (["wildcard", "freehit", "3xc"], 19)
+
+    assert private.squad == squad and private.bank == 2.1 and private.free_transfers == 2
+    assert private.sell_prices[squad[3]] == 5.3 and private.transfers_open
+    assert [p["position"] for p in private.picks] == list(range(1, 16))
 
     as_of = season.events.set_index("id").loc[7, "deadline_time"]
     per_gw, _ = model.project(season.history, season.players, season.fixtures, season.teams, [7, 8], as_of)
