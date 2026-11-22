@@ -11,8 +11,12 @@ on:
       job:
         description: Which job (cron-job.org sends tick)
         type: choice
-        options: [dry-run, tick, preview, main, final, check-write]
+        options: [dry-run, tick, preview, main, final, check-write, explain]
         default: dry-run
+      player:
+        description: For explain, the player's name as FPL shows it (e.g. Haaland)
+        type: string
+        default: ""
       email:
         description: Email the dry run
         type: boolean
@@ -42,7 +46,13 @@ jobs:
       - run: pip install -r requirements.txt pytest
       - if: github.event_name == 'push'
         run: python -m pytest -q
+      - name: Explain a projection
+        if: inputs.job == 'explain'
+        run: python explain.py "$PLAYER"
+        env:
+          PLAYER: ${{ inputs.player }}
       - name: Bot
+        if: inputs.job != 'explain'
         run: bash hosted_run.sh --job "${JOB:-dry-run}" ${{ (github.event_name == 'workflow_dispatch' && inputs.job == 'dry-run' && inputs.email) && '--email' || '' }}
         env:
           JOB: ${{ inputs.job }}
