@@ -58,6 +58,9 @@ A failed main run is retried at the next tick, and the final check is a last ret
 - **Failure emails**: a refused request, a crash, a failed login or a lost login token sends an
   ACTION NEEDED email with what to do by hand. GitHub also emails you when a run fails, and
   cron-job.org emails you if it can't start one.
+- **Saved state**: each run retries fetching `bot-state` before giving up. If GitHub still doesn't
+  answer, the run stops before doing anything and emails you; the next tick tries again. It never
+  mistakes a GitHub hiccup for a first run (that caused a false "could not save its login" on Nov 23).
 - **`check-write` job**: re-saves your lineup unchanged and reads it back, which proves FPL
   accepts the bot's requests. It last passed Nov 22 (HTTP 202, lineup unchanged).
 

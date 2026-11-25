@@ -138,7 +138,7 @@ def test_refusal_emails_action_needed_and_final_retries(fpl):
     server = fpl(refuse=("my-team/",))
     deadline = server.deadlines[GW]
     assert bot.tick(deadline - pd.Timedelta(hours=2), live=True) == "main"
-    assert server.emails[-1][0].startswith("FPL ACTION NEEDED") and "HTTP 400" in server.emails[-1][1]
+    assert server.emails[-1][0].startswith("ACTION NEEDED") and "HTTP 400" in server.emails[-1][1]
     assert "main" not in schedule.load(GW, deadline)["done"]
     assert bot.tick(deadline - pd.Timedelta(hours=1.5), live=True) == "main"     # next tick tries again
     server.refuse.clear()

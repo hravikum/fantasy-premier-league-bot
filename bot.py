@@ -343,7 +343,7 @@ def main_run(ctx, job="main"):
     if success:
         email(ctx, f"GW{ctx.gw} {job} run done: {summary}", msg)
     else:
-        email(True, f"FPL ACTION NEEDED: GW{ctx.gw} {job} run couldn't make its changes", msg)
+        email(True, f"ACTION NEEDED: GW{ctx.gw} {job} run couldn't make its changes", msg)
     return success, chip
 
 
@@ -371,7 +371,7 @@ def final_check(ctx, record):
         out = [by_id.loc[p["element"], "web_name"] for p in ctx.team.picks
                if p["position"] <= 11 and by_id.loc[p["element"], "status"] != "a"]
         if out:
-            email(True, f"FPL ACTION NEEDED: GW{ctx.gw} starters flagged under your {chips.NAMES[chip]}",
+            email(True, f"ACTION NEEDED: GW{ctx.gw} starters flagged under your {chips.NAMES[chip]}",
                   message(ctx, f"GW{ctx.gw} final check: ACTION NEEDED", [doc.Callout("Action needed", [
                       f"Flagged since the main run: {', '.join(out)}.",
                       f"With a {chips.NAMES[chip]} active the bot leaves the lineup to you."], "bad")], alert=True))
@@ -402,7 +402,7 @@ def final_check(ctx, record):
     if success:
         email(ctx, f"GW{ctx.gw} final check: lineup updated", msg)
     else:
-        email(True, f"FPL ACTION NEEDED: GW{ctx.gw} final check couldn't update the lineup", msg)
+        email(True, f"ACTION NEEDED: GW{ctx.gw} final check couldn't update the lineup", msg)
     return ok and not problems, chip
 
 
@@ -503,7 +503,7 @@ def main():
     except Exception as problem:
         job = saved_schedule().get("running") if args.job == "tick" else args.job
         if job in ("preview", "main", "final") or (args.job == "tick" and near_deadline(now)):
-            email(True, f"FPL ACTION NEEDED: the bot's {job} run crashed", doc.Message(
+            email(True, f"ACTION NEEDED: the bot's {job} run crashed", doc.Message(
                 f"The bot's {job} run crashed", "Nothing after the crash was done", [("Needs you", "bad")], [
                     doc.Callout("Action needed", [f"{type(problem).__name__}: {problem}", doc.Tone(
                         "If the deadline is close, check your team on the FPL site yourself.", bold=True)], "bad"),
