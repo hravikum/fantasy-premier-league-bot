@@ -183,3 +183,29 @@ def test_check_write_changes_nothing(fpl):
     assert bot.check_write(ctx)
     key = lambda picks: sorted((p["element"], p["position"], p["is_captain"]) for p in picks)
     assert key(server.picks) == key(before) and len(server.posts) == 1
+
+
+def test_suspended_player_goes_with_a_free_transfer_and_fixtures_show(fpl):
+    """A starting defender suspended for this gameweek and the next: the preview sells him under the
+    rule-out rule (or says why he stays), the fixtures table marks him out, and the main run does it."""
+    server = fpl()
+    deadline = server.deadlines[GW]
+    elements = server.players.set_index("id")
+    defenders = [p["element"] for p in server.picks if elements.loc[p["element"], "element_type"] == 2]
+    hurt = min(defenders, key=lambda e: elements.loc[e, "total_points"])
+    back = (server.deadlines[GW + 2] + pd.Timedelta(days=1)).strftime("%d %b")
+    row = server.players.id == hurt
+    server.players.loc[row, ["status", "chance_of_playing_next_round", "news"]] = ["s", 0, f"Suspended until {back}"]
+    name = elements.loc[hurt, "web_name"]
+
+    assert bot.tick(deadline - pd.Timedelta(hours=24), live=True) == "preview"
+    subject, text, html = server.emails[-1]
+    print(text)
+    assert f"FIXTURES, GW{GW}–{GW + 2}" in text and f"{name}(OUT)" in text
+    assert f"GW{GW}–{GW + 1}, so he goes now" in text or f"{name} goes now" in text
+    assert "Badge" not in html and ">OUT<" in html
+
+    assert bot.tick(deadline - pd.Timedelta(hours=2), live=True) == "main"
+    sent = [p for path, p in server.posts if path == "transfers/"]
+    assert sent and hurt in [t["element_out"] for t in sent[0]["transfers"]]
+    assert "ruled out" in server.emails[-1][1]

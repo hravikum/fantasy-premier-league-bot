@@ -89,21 +89,30 @@ def lineup_action(team, week, players, chip=None, chip_already_set=False):
 
 
 def decide(team, planned, waiting, gain, players, per_transfer=GAIN_PER_TRANSFER, chip=None,
-           chip_already_set=False):
+           chip_already_set=False, sold=None):
     """The no-approval decision (plus an approved Triple Captain or Bench Boost, `chip`).
-    planned: this week of the full plan. waiting: this week with no transfers. gain: planned vs. waiting."""
+    planned: this week of the full plan. waiting: this week with no transfers. gain: planned vs. waiting
+    (vs. making only the rule-out sales, if any). sold: {player id: "GW12–14"}, players ruled out who go
+    now under the rule-out rule, so they don't count against the bar."""
     actions, lineup_week = [], waiting
     if planned.transfers_in:
         payload = transfers_payload(team.entry, planned, players, team.sell_prices)
+        forced = [o for o in planned.transfers_out if o in (sold or {})]
+        extra = len(planned.transfers_in) - len(forced)
         if not team.transfers_open:
             mode, why = "skip", "a Wildcard or Free Hit is active this week: transfers are left to you"
         elif planned.hits:
             mode, why = "ask", f"{planned.hits} hit(s), -{4 * planned.hits}: needs your OK"
-        elif gain < per_transfer * len(planned.transfers_in):      # plan_this_week normally sees to this
-            bar = per_transfer * len(planned.transfers_in)
+        elif extra and gain < per_transfer * extra:      # plan_this_week normally sees to this
+            bar = per_transfer * extra
             mode, why = "skip", f"only {gain:+.1f} xP better than waiting a week (bar is {bar:+.1f})"
         else:
-            mode, why = "auto", f"free transfer(s), {gain:+.1f} xP better than waiting a week"
+            name = players.set_index("id")["web_name"]
+            reasons = [f"{name[o]} is ruled out {sold[o]}, so he goes now" for o in forced]
+            if extra:
+                reasons.append(f"{gain:+.1f} xP better than waiting a week" if not forced else
+                               f"the other move{'s' if extra > 1 else ''} {gain:+.1f} xP better than waiting a week")
+            mode, why = "auto", "free transfer(s), " + "; ".join(reasons)
             lineup_week = planned
         actions.append(Action("transfers", mode, why, "transfers/", payload))
     lineup = lineup_action(team, lineup_week, players, chip, chip_already_set)

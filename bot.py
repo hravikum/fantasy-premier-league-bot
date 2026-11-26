@@ -162,7 +162,8 @@ def log_flags(ctx, job):
 
 def dry_run(ctx, send_email):
     analysis = recommend.analyse(ctx.per_gw, ctx.players, ctx.team, ctx.horizon_gws)
-    actions = executor.decide(ctx.team, analysis.base.weeks[0], analysis.wait.weeks[0], analysis.gain, ctx.players)
+    actions = executor.decide(ctx.team, analysis.base.weeks[0], analysis.wait.weeks[0], analysis.gain, ctx.players,
+                              sold=analysis.sold)
     blocks = context_blocks(ctx) + executor.describe(actions, ctx.players, "What the bot would change on FPL") + \
         recommend.report(analysis, ctx.per_gw, ctx.pf, ctx.players, ctx.season.fixtures, ctx.season.teams,
                          ctx.team, ctx.horizon_gws)
@@ -191,11 +192,11 @@ def preview(ctx):
         decision["n"] = n
     # What the main run does if you say no to everything: no hits, no chip.
     if first.hits:
-        base, wait, gain, _ = recommend.plan_this_week(ctx.plan_xp, ctx.players, ctx.team, ctx.gw,
-                                                       optimizer.Settings(max_hits=0))
-        default = executor.decide(ctx.team, base.weeks[0], wait.weeks[0], gain, ctx.players)
+        base, wait, gain, _, sold, _ = recommend.plan_this_week(ctx.plan_xp, ctx.players, ctx.team, ctx.gw,
+                                                                optimizer.Settings(max_hits=0))
+        default = executor.decide(ctx.team, base.weeks[0], wait.weeks[0], gain, ctx.players, sold=sold)
     else:
-        default = executor.decide(ctx.team, first, a.wait.weeks[0], a.gain, ctx.players)
+        default = executor.decide(ctx.team, first, a.wait.weeks[0], a.gain, ctx.players, sold=a.sold)
     code = None
     if decisions:
         code = approvals.new_code()
@@ -272,8 +273,8 @@ def approved_actions(ctx, approved, notes):
             notes.append("The hit transfers you approved can't be made as approved (a player is now doubtful or "
                          "already moved), so they weren't made.")
     if chip:
-        base, wait, gain, _ = recommend.plan_this_week(ctx.plan_xp, players, team, gw, settings)
-        return executor.decide(team, base.weeks[0], wait.weeks[0], gain, players, chip=chip), chip
+        base, wait, gain, _, sold, _ = recommend.plan_this_week(ctx.plan_xp, players, team, gw, settings)
+        return executor.decide(team, base.weeks[0], wait.weeks[0], gain, players, chip=chip, sold=sold), chip
     return None, None
 
 
@@ -306,9 +307,9 @@ def main_run(ctx, job="main"):
     elif actions is None:
         settings = optimizer.Settings(max_hits=0, triple_captain_gw=ctx.gw if active == "3xc" else None,
                                       bench_boost_gw=ctx.gw if active == "bboost" else None)
-        base, wait, gain, _ = recommend.plan_this_week(ctx.plan_xp, ctx.players, ctx.team, ctx.gw, settings)
+        base, wait, gain, _, sold, _ = recommend.plan_this_week(ctx.plan_xp, ctx.players, ctx.team, ctx.gw, settings)
         actions = executor.decide(ctx.team, base.weeks[0], wait.weeks[0], gain, ctx.players,
-                                  chip=active, chip_already_set=bool(active))
+                                  chip=active, chip_already_set=bool(active), sold=sold)
         chip = active
     ok = executor.send(actions, ctx.token, ctx.deadline, ctx.live, job, now=ctx.clock())
     problems = []

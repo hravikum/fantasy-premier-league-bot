@@ -35,6 +35,16 @@ A failed main run is retried at the next tick, and the final check is a last ret
   rules, budget with selling prices, free transfers banked up to 5, −4 hits and captaincy.
   - Each transfer made this week has to add at least 1 expected point over waiting a week.
   - If the batch's last transfer doesn't, it's re-planned with one fewer.
+  - **Ruled-out players go now.** A squad player FPL rules out (0%: injured, suspended, left the
+    club) for this gameweek and the next is sold this week with a free transfer, without having to
+    clear the bar. That frees his squad spot before his price drops. Exception: if the best plan
+    still has him (kept, or bought back) at the end of the 6 weeks, he's worth keeping and stays.
+    No free transfer left means he waits; a hit for him would need your yes like any other.
+- **Fixtures table**: every plan and preview email lists your squad, this week's buys and the
+  plan's buys for the next two weeks, with each one's next 3 opponents and expected points. The
+  opponent is green for an easier fixture than average for that player and red for a harder one
+  (his team's attack for MID/FWD, the opponent's attack for GK/DEF). "out" marks a gameweek he's
+  ruled out.
 - **Chips (`chips.py`)**: each remaining chip's value in every week up to its expiry (first set:
   GW19 deadline, Sat 2 Jan), spread one chip a week for the most points.
   - A chip is proposed when its best week is the coming one and it's clearly worth it:

@@ -6,6 +6,7 @@ options: --horizon 6 (gameweeks to plan over), --ft N (override free transfers)
 """
 import argparse
 from dataclasses import dataclass, replace
+from typing import NamedTuple
 
 import pandas as pd
 
@@ -24,7 +25,7 @@ HORIZON = 6
 class Analysis:
     base: optimizer.Plan          # the plan to act on this week
     wait: optimizer.Plan          # the same, with no transfers this week
-    gain: float                   # base vs. wait, expected points over the horizon
+    gain: float                   # base vs. waiting (vs. only the rule-out sales, if any), over the horizon
     held_back: int                # moves in the full plan that didn't clear the per-transfer bar
     chips: list                   # chips available this half
     expires: int                  # last gameweek of this half
@@ -32,45 +33,111 @@ class Analysis:
     chip_plan: dict               # chip -> gameweek, the best spread
     chip_proposal: str | None     # chip to ask about this week
     wildcard_gain: float
+    sold: dict = None             # player id -> gameweeks he's ruled out: sold now under the rule-out rule
+    kept: dict = None             # player id -> why a ruled-out player stays
+
+
+class ThisWeek(NamedTuple):
+    base: optimizer.Plan          # the plan to act on
+    wait: optimizer.Plan          # no transfers this week
+    gain: float                   # base vs. the plan making only the rule-out sales (vs. wait if there are none)
+    held_back: int                # moves in the full plan that didn't clear the per-transfer bar
+    sold: dict                    # player id -> "GW12–14": ruled out, so he goes now whatever the bar says
+    kept: dict                    # player id -> why a ruled-out player stays this week
+
+
+OUT_STATUSES = ("i", "s", "u", "n")      # injured, suspended, left the club, not eligible
+
+
+def ruled_out(per_gw, players, squad, gw):
+    """Squad players FPL rules out (0% chance) who project nothing this gameweek and the next one at
+    least: {id: "GW12–14"}, the run of gameweeks he misses ("+" if it runs past the horizon)."""
+    if "status" not in players.columns:
+        return {}
+    gws = [g for g in per_gw.columns if g >= gw]
+    by_id = players.set_index("id")
+    out = {}
+    for i in squad:
+        if i not in by_id.index or i not in per_gw.index or by_id.loc[i, "status"] not in OUT_STATUSES:
+            continue
+        chance = by_id.loc[i, "chance"]
+        if chance == chance and chance > 0:     # NaN (no figure) counts as ruled out
+            continue
+        missed = 0
+        for g in gws:
+            if abs(per_gw.loc[i, g]) > 1e-6:
+                break
+            missed += 1
+        if missed >= 2:
+            out[i] = f"GW{gw}–{gws[missed - 1]}" + ("+" if missed == len(gws) else "")
+    return out
 
 
 def plan_this_week(per_gw, players, team, gw, settings=optimizer.Settings()):
-    """The plan to act on, the plan that waits a week, how much better acting is, and how many of
-    the full plan's moves were held back.
+    """The plan to act on, the plan that waits a week, how much better acting is, how many of the full
+    plan's moves were held back, and the rule-out sales.
 
-    Every transfer made now has to earn executor.GAIN_PER_TRANSFER on its own: the best plan with
-    k transfers this week must beat the best plan with k-1 by that much. If the last one doesn't,
-    the plan with one fewer is tried, so a weak move can't ride along with a strong one."""
+    Rule-out rule (your choice, Nov 26): a player FPL rules out for this gameweek and the next is sold
+    now with a free transfer, unless the model would rather keep him (he's still, or again, in the best
+    plan's squad at the end of the horizon). Those sales don't have to clear the bar.
+
+    Every other transfer made now has to earn executor.GAIN_PER_TRANSFER on its own: the best plan with
+    k transfers this week must beat the best plan with k-1 by that much. If the last one doesn't, the
+    plan with one fewer is tried, so a weak move can't ride along with a strong one."""
     args = (per_gw, players, team.squad, team.bank, team.free_transfers, team.sell_prices)
     wait = optimizer.plan(*args, replace(settings, frozen_gws={gw}))
     if not wait.weeks:
         raise RuntimeError(f"Optimizer found no plan: {wait.status}")
     if not team.transfers_open:              # a Wildcard or Free Hit is active: transfers are yours
-        return wait, wait, 0.0, 0
+        return ThisWeek(wait, wait, 0.0, 0, {}, {})
     best = optimizer.plan(*args, settings)
+
+    out = ruled_out(per_gw, players, team.squad, gw)
+    final_squad = set(best.weeks[-1].xi) | set(best.weeks[-1].bench)   # sold and bought back = worth keeping
+    sold, kept = {}, {}
+    for i in sorted(out, key=lambda i: per_gw.loc[i].sum()):    # least worth keeping first
+        if len(sold) >= team.free_transfers:
+            kept[i] = f"ruled out {out[i]}, but there's no free transfer left for him this week"
+        elif i in final_squad:
+            kept[i] = f"ruled out {out[i]}, but the model expects more from keeping him than from replacing him"
+        else:
+            sold[i] = out[i]
+    floor = wait
+    if sold:
+        forcing = replace(settings, must_sell={**settings.must_sell, gw: set(sold)})
+        only_sales = optimizer.plan(*args, replace(forcing, transfer_limit={gw: len(sold)}))
+        with_sales = optimizer.plan(*args, forcing)
+        if only_sales.weeks and with_sales.weeks:
+            settings, floor, best = forcing, only_sales, with_sales
+        else:                                # can't be done (e.g. no affordable replacement): leave it
+            kept.update({i: f"ruled out {span}, but no replacement fits the budget" for i, span in sold.items()})
+            sold = {}
+
     wanted = len(best.weeks[0].transfers_in)
     bar = executor.GAIN_PER_TRANSFER
-    while best.weeks[0].transfers_in:
+    while len(best.weeks[0].transfers_in) > len(sold):
         count = len(best.weeks[0].transfers_in)
-        fewer = wait if count == 1 else optimizer.plan(*args, replace(settings, transfer_limit={gw: count - 1}))
+        extra = count - len(sold)
+        fewer = floor if extra == 1 else optimizer.plan(*args, replace(settings, transfer_limit={gw: count - 1}))
         # the last move earns its keep, and the whole set beats waiting by the bar for every move
-        if best.objective - fewer.objective >= bar and best.objective - wait.objective >= bar * count:
+        if best.objective - fewer.objective >= bar and best.objective - floor.objective >= bar * extra:
             break
         best = fewer
-    return best, wait, best.objective - wait.objective, wanted - len(best.weeks[0].transfers_in)
+    return ThisWeek(best, wait, best.objective - floor.objective, wanted - len(best.weeks[0].transfers_in),
+                    sold, kept)
 
 
 def analyse(per_gw, players, team, horizon_gws):
     """per_gw: projections up to the chips' expiry (at least the horizon). The plan uses the horizon."""
     gw = horizon_gws[0]
     plan_xp = per_gw[horizon_gws]
-    base, wait, gain, held = plan_this_week(plan_xp, players, team, gw)
+    base, wait, gain, held, sold, kept = plan_this_week(plan_xp, players, team, gw)
     chips, expires = team.chips_available(gw)
     usable = [c for c in chips if c != "wildcard"]
     table = chip_planner.values(per_gw, players, team, base, usable, expires) if usable else pd.DataFrame()
     wild = chip_planner.wildcard_gain(plan_xp, players, team, base, gw) if "wildcard" in chips else float("nan")
     proposal, spread = chip_planner.propose(table, chips, gw, expires, wild)
-    return Analysis(base, wait, gain, held, chips, expires, table, spread, proposal, wild)
+    return Analysis(base, wait, gain, held, chips, expires, table, spread, proposal, wild, sold, kept)
 
 
 def fixture_counts(fixtures, teams, gws):
@@ -96,22 +163,37 @@ def report(analysis, per_gw, pf, players, fixtures, teams, team, horizon_gws):
     span = f"next {len(horizon_gws)} GWs"
     chips_left = ", ".join(team_module.CHIPS[c] for c in analysis.chips) or "none"
     blocks = [doc.Heading(f"Transfers for GW{first.gw}" + (f" ({first.hits} hit, -{4 * first.hits})" if first.hits else ""))]
+    sold, kept = analysis.sold or {}, analysis.kept or {}
     if first.transfers_in:
-        rows = [[f"{by_id.loc[o, 'web_name']} £{by_id.loc[o, 'price']:.1f}", "→",
+        rows = [[[f"{by_id.loc[o, 'web_name']} £{by_id.loc[o, 'price']:.1f}",
+                  *([doc.Badge(f"out {sold[o]}", "bad")] if o in sold else [])], "→",
                  f"{by_id.loc[i, 'web_name']} £{by_id.loc[i, 'price']:.1f}", by_id.loc[i, "position"],
                  f"{per_gw.loc[o, horizon_gws].sum():.1f} → {per_gw.loc[i, horizon_gws].sum():.1f}"]
                 for o, i in zip(first.transfers_out, first.transfers_in)]
         blocks.append(doc.Table(["Out", "", "In", "Pos", f"xP, {span}"], rows, right={4}))
-        blocks.append(doc.Para([doc.Tone(f"{analysis.gain:+.1f} expected points", "good", bold=True),
-                                f" over the horizon vs. waiting a week (each move adds at least "
-                                f"{executor.GAIN_PER_TRANSFER:.0f})."]))
+        for o in [o for o in first.transfers_out if o in sold]:
+            news = by_id.loc[o, "news"] or "ruled out by FPL"
+            blocks.append(doc.Para([doc.Tone(by_id.loc[o, "web_name"], bold=True),
+                                    f" goes now: {news}, so he misses {sold[o]}. Your rule: a player ruled out "
+                                    "for 2+ gameweeks is sold with a free transfer unless he's worth keeping, "
+                                    "freeing his squad spot before his price drops."]))
+        extra = len(first.transfers_in) - len([o for o in first.transfers_out if o in sold])
+        if extra:
+            lead = [f"The other move{'s' if extra > 1 else ''}: "] if sold else []
+            blocks.append(doc.Para(lead + [doc.Tone(f"{analysis.gain:+.1f} expected points", "good", bold=True),
+                                           f" over the horizon vs. waiting a week (each move adds at least "
+                                           f"{executor.GAIN_PER_TRANSFER:.0f})."]))
     else:
         blocks.append(doc.Para("None this week" + (": banking the free transfer." if team.free_transfers else "."),
+                               tone="muted"))
+    for i, why in kept.items():
+        blocks.append(doc.Para([doc.Tone(by_id.loc[i, "web_name"], bold=True), f" stays for now: {why}."],
                                tone="muted"))
     if analysis.held_back:
         blocks.append(doc.Para(f"{analysis.held_back} more move(s) in the full plan added less than "
                                f"{executor.GAIN_PER_TRANSFER:.0f} expected point each over waiting, so they wait.",
                                tone="muted"))
+    blocks += fixture_blocks(analysis.base, per_gw, pf, players, teams, team)
 
     blocks.append(doc.Heading(f"Starting XI for GW{first.gw}: {first.xp:.1f} expected with captain"))
     blocks += lineup_blocks(first, per_gw, pf, players, teams)
@@ -134,6 +216,77 @@ def report(analysis, per_gw, pf, players, fixtures, teams, team, horizon_gws):
         blocks.append(doc.Para("Doubles and blanks: " + " | ".join(notes)))
     blocks += top_projections(per_gw[horizon_gws], players)
     return blocks
+
+
+FIXTURE_WEEKS = 3
+
+
+def fixture_tone(row, mu):
+    """Green for an easier fixture than average for this player, red for a harder one: his team's
+    expected goals for MID/FWD, the opponent's for GK/DEF (the model's team ratings, home advantage in)."""
+    if row.position in ("GK", "DEF"):
+        ratio = row.lam_against / mu
+        return "good" if ratio <= 0.8 else "bad" if ratio >= 1.2 else None
+    ratio = row.lam_for / mu
+    return "good" if ratio >= 1.2 else "bad" if ratio <= 0.8 else None
+
+
+def fixture_blocks(plan, per_gw, pf, players, teams, team, weeks=FIXTURE_WEEKS):
+    """Your squad and the players the plan brings in: each one's next few fixtures and expected points."""
+    gws = [g for g in per_gw.columns if g >= plan.weeks[0].gw][:weeks]
+    if not gws or pf is None or pf.empty:
+        return []
+    by_id = players.set_index("id")
+    short = teams.set_index("id")["short_name"]
+    order = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3}
+    games = pf[pf.gw.isin(gws)]
+    mu = games.drop_duplicates(["gw", "team", "opp"]).lam_for.mean()
+    first = plan.weeks[0]
+    window = [w for w in plan.weeks[1:] if w.gw in gws]         # later moves whose fixtures are in view
+    sell_week = {i: w.gw for w in reversed(window) for i in w.transfers_out}
+    buy_week = {i: w.gw for w in reversed(window) for i in w.transfers_in}
+
+    def row(i, badges):
+        cells = [[by_id.loc[i, "web_name"], *badges], by_id.loc[i, "position"]]
+        for g in gws:
+            fx = games[(games.id == i) & (games.gw == g)]
+            if fx.empty:
+                cells.append(doc.Tone("no match", "muted"))
+                continue
+            parts = []
+            for n, f in enumerate(fx.itertuples()):
+                parts += ([", "] if n else []) + [doc.Tone(f"{short[f.opp]} ({'H' if f.home else 'A'})",
+                                                           fixture_tone(f, mu))]
+            out = (fx.avail <= 0).all()
+            parts += [" ", doc.Tone("out", "bad", bold=True) if out else f"{per_gw.loc[i, g]:.1f}"]
+            cells.append(parts)
+        cells.append(f"{per_gw.loc[i, gws].sum():.1f}")
+        return cells
+
+    def key(i):
+        return order[by_id.loc[i, "position"]], -per_gw.loc[i, gws].sum()
+
+    rows, tones = [], {}
+    for i in sorted(team.squad, key=key):
+        if i in first.transfers_out:
+            tones[len(rows)] = "bad"
+            badges = [doc.Badge("OUT", "bad")]
+        else:
+            badges = [doc.Badge(f"sell GW{sell_week[i]}", "muted")] if i in sell_week else []
+        rows.append(row(i, badges))
+    for i in sorted(first.transfers_in, key=key):
+        tones[len(rows)] = "good"
+        rows.append(row(i, [doc.Badge("IN", "good")]))
+    for i in sorted([i for i in buy_week if i not in team.squad and i not in first.transfers_in],
+                    key=lambda i: (buy_week[i], *key(i))):
+        rows.append(row(i, [doc.Badge(f"buy GW{buy_week[i]}", "muted")]))
+    span = f"GW{gws[0]}–{gws[-1]}" if len(gws) > 1 else f"GW{gws[0]}"
+    return [doc.Heading(f"Fixtures, {span}: your squad and the plan's buys"),
+            doc.Table(["Player", "Pos", *[f"GW{g}" for g in gws], "xP"], rows, right={len(gws) + 2},
+                      row_tones=tones,
+                      note="Opponent in green: an easier fixture than average for him; red: harder (his team's "
+                           "attack for midfielders and forwards, the opponent's attack for keepers and defenders). "
+                           "Number: his expected points that week. 'out': ruled out.")]
 
 
 def lineup_blocks(week, per_gw, pf, players, teams, chip=None):

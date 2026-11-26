@@ -90,6 +90,59 @@ def test_each_transfer_must_clear_the_bar():
     full = optimizer.plan(flat, players, squad, 10.0, 5, me.sell_prices)
     raw = full.weeks[0].transfers_in
     assert {big, small} <= set(raw)           # unconstrained, it makes both (plus free zero-gain swaps)
-    base, wait, gain, held = recommend.plan_this_week(flat, players, me, fixtures.GWS[0])
+    base, wait, gain, held, sold, kept = recommend.plan_this_week(flat, players, me, fixtures.GWS[0])
+    assert sold == {} and kept == {}
     assert base.weeks[0].transfers_in == [big] and held == len(raw) - 1
     assert executor.decide(me, base.weeks[0], wait.weeks[0], gain, players)[0].mode == "auto"
+
+
+def ruled_out_scenario(back_xp, free=5, sub_xp=2.3):
+    """Flat 2.0 everywhere; one squad defender suspended for the first two gameweeks, then back_xp.
+    A defender outside the squad projects sub_xp: replacing the suspended one gains little each week."""
+    players, xp = fixtures.make_pool()
+    squad = fixtures.cheapest_squad(players)
+    players["status"], players["chance"], players["news"] = "a", 100.0, ""
+    flat = xp.copy()
+    flat.loc[:] = 2.0
+    by_id = players.set_index("id")
+    hurt = next(i for i in squad if by_id.loc[i, "position"] == "DEF")
+    players.loc[players.id == hurt, ["status", "chance", "news"]] = ["s", 0.0, "Suspended until 13 Dec"]
+    flat.loc[hurt] = [0.0, 0.0, back_xp]
+    sub = players[~players.id.isin(squad) & (players.position == "DEF")].iloc[0]["id"]
+    flat.loc[sub] = sub_xp
+    players.loc[players.id == sub, "price"] = 4.0
+    me = team.Team(1, "x", squad, 10.0, free, {i: by_id.loc[i, "price"] for i in squad})
+    return players, flat, me, hurt
+
+
+def test_ruled_out_finds_two_week_absences_only():
+    players, flat, me, hurt = ruled_out_scenario(back_xp=2.0)
+    assert recommend.ruled_out(flat, players, me.squad, fixtures.GWS[0]) == {hurt: "GW10–11"}
+    flat.loc[hurt, fixtures.GWS[1]] = 1.0                       # back after one week: not long enough
+    assert recommend.ruled_out(flat, players, me.squad, fixtures.GWS[0]) == {}
+
+
+def test_ruled_out_player_is_sold_now_with_a_free_transfer():
+    """Selling him now gains well under the 1-point bar, but the rule sells him now anyway."""
+    players, flat, me, hurt = ruled_out_scenario(back_xp=0.5)
+    base, wait, gain, held, sold, kept = recommend.plan_this_week(flat, players, me, fixtures.GWS[0])
+    first = base.weeks[0]
+    assert sold == {hurt: "GW10–11"} and first.transfers_out == [hurt] and not first.hits
+    action = executor.decide(me, first, wait.weeks[0], gain, players, sold=sold)[0]
+    assert action.mode == "auto" and "ruled out GW10–11, so he goes now" in action.why
+    # without the rule, the same move would be refused for missing the bar
+    assert executor.decide(me, first, wait.weeks[0], gain, players)[0].mode == "skip"
+
+
+def test_ruled_out_player_worth_keeping_stays():
+    """Back in the third week with a big projection: the model would rather keep him."""
+    players, flat, me, hurt = ruled_out_scenario(back_xp=15.0)
+    base, wait, gain, held, sold, kept = recommend.plan_this_week(flat, players, me, fixtures.GWS[0])
+    assert sold == {} and hurt not in base.weeks[0].transfers_out and "keeping him" in kept[hurt]
+
+
+def test_ruled_out_player_needs_a_free_transfer():
+    players, flat, me, hurt = ruled_out_scenario(back_xp=0.5, free=0)
+    base, wait, gain, held, sold, kept = recommend.plan_this_week(flat, players, me, fixtures.GWS[0],
+                                                                 optimizer.Settings(max_hits=0))
+    assert sold == {} and not base.weeks[0].transfers_in and "no free transfer" in kept[hurt]

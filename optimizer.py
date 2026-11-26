@@ -33,6 +33,7 @@ class Settings:
     frozen_gws: set = field(default_factory=set)   # no transfers in these gameweeks
     transfer_limit: dict = field(default_factory=dict)   # gameweek -> most transfers allowed
     forced: dict = field(default_factory=dict)   # gameweek -> (ids in, ids out): exactly these transfers
+    must_sell: dict = field(default_factory=dict)   # gameweek -> ids that must go that week (any replacement)
     time_limit: float = 120.0
 
 
@@ -173,6 +174,9 @@ def plan(xp, players, squad, bank, free_transfers, sell_prices=None, settings=Se
                     constrain({tin[t][i]: 1}, 1, 1)
                 if ids[i] in outs:
                     constrain({tout[t][i]: 1}, 1, 1)
+        for i in range(n):
+            if ids[i] in settings.must_sell.get(gw, ()):
+                constrain({tout[t][i]: 1}, 1, 1)
         if gw == settings.wildcard_gw:
             constrain({paid[t]: 1}, 0, 0)
         else:
