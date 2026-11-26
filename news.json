@@ -1,0 +1,34 @@
+{
+  "gw": 12,
+  "checked_at": "2026-11-26T17:49:13Z",
+  "players": [
+    {
+      "id": 1,
+      "name": "Raya",
+      "start_chance": 0.4,
+      "reason": "Missed Tuesday's Champions League game v Dortmund with the shoulder injury and no return to training has been reported; Arteta gave no update after that game and RotoWire projects Kepa in goal v Man City, though some reports say Raya is in contention.",
+      "source": "https://www.rotowire.com/soccer/article/arsenal-vs-manchester-city-prediction-predicted-lineups-team-news-148253"
+    },
+    {
+      "id": 31,
+      "name": "Konsa",
+      "start_chance": 0.75,
+      "reason": "Predicted to start beside Gabriel v Man City, but Saliba is back in training after his back injury and Arteta wants to give him exposure, so Konsa's place is less secure than his flag suggests.",
+      "source": "https://www.rotowire.com/soccer/article/arsenal-vs-manchester-city-prediction-predicted-lineups-team-news-148253"
+    }
+  ],
+  "teams_checked": [
+    "Spurs",
+    "Brighton",
+    "Everton",
+    "Arsenal",
+    "Bournemouth",
+    "Liverpool",
+    "Sunderland",
+    "Chelsea",
+    "Aston Villa",
+    "Coventry City",
+    "Man City"
+  ],
+  "notes": "Checked Thursday evening, before most Friday press conferences (Arteta's Raya update is due Fri 27 Nov). Bournemouth rested Tavernier and Evanilson (bench) for Thursday's Europa League game at Celta, which points to them starting at Fulham; Hill started that game. Brighton (Craiova) and Sunderland (Jagiellonia) also play in Europe on Thursday night; Groß was predicted to be rested, Vuskovic, Le Fée and Hume predicted to start; check their minutes and any knocks on the next run. No current-season Spurs preview found; Kinsky is in Fantasy Football Pundit's predicted XI. Wirtz, Isak, Barcola, Calafiori, Haaland, Rogers, N.Jackson (escaped a second yellow v Galatasaray, no ban), Rudoni and Groß are in predicted XIs with no new concerns. Tarkowski suspension already reflected in FPL."
+}
