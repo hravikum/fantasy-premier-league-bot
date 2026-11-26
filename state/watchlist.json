@@ -25,9 +25,9 @@
    "name": "Tarkowski",
    "team": "Everton",
    "position": "DEF",
-   "fpl_status": "a",
-   "fpl_chance": 100.0,
-   "fpl_news": ""
+   "fpl_status": "s",
+   "fpl_chance": 0.0,
+   "fpl_news": "Suspended until 13 Dec"
   },
   {
    "id": 8,
@@ -107,8 +107,8 @@
    "team": "Arsenal",
    "position": "GK",
    "fpl_status": "d",
-   "fpl_chance": 75.0,
-   "fpl_news": "Shoulder injury - 75% chance of playing"
+   "fpl_chance": 50.0,
+   "fpl_news": "Shoulder injury - 50% chance of playing"
   },
   {
    "id": 627,
@@ -138,19 +138,19 @@
    "fpl_news": ""
   },
   {
-   "id": 385,
-   "name": "Trafford",
-   "team": "Leeds",
-   "position": "GK",
+   "id": 124,
+   "name": "Gro\u00df",
+   "team": "Brighton",
+   "position": "MID",
    "fpl_status": "a",
    "fpl_chance": 100.0,
    "fpl_news": ""
   },
   {
-   "id": 124,
-   "name": "Gro\u00df",
-   "team": "Brighton",
-   "position": "MID",
+   "id": 60,
+   "name": "Hill",
+   "team": "Bournemouth",
+   "position": "DEF",
    "fpl_status": "a",
    "fpl_chance": 100.0,
    "fpl_news": ""
