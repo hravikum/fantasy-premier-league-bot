@@ -14,6 +14,7 @@ import mailer
 import news
 import optimizer
 import schedule
+import slack
 
 SEASON, GW = "2026-27", 7
 
@@ -94,14 +95,34 @@ def fpl(tmp_path, monkeypatch):
         monkeypatch.setattr(data, "post", server.post)
         monkeypatch.setattr(auth, "access_token", lambda: "token")
         monkeypatch.setattr(approvals, "check", lambda code, since, count: (reply or {}, []))
-        server.emails = []
-        monkeypatch.setattr(mailer, "send", lambda subject, body, html=None:
-                            server.emails.append((subject, body, html)) or True)
+        server.emails, server.slack = [], []
+        monkeypatch.setattr(mailer, "send", lambda subject, body, html=None, slack_posts=None, urgent=False:
+                            server.emails.append((subject, body, html)) or server.slack.append((slack_posts, urgent))
+                            or True)
         for module, name in [(schedule, "STATE"), (approvals, "STATE"), (executor, "LOG"), (bot, "FLAGS"),
                              (news, "WATCHLIST"), (news, "NEWS"), (news, "HEARTBEAT")]:
             monkeypatch.setattr(module, name, tmp_path / f"{module.__name__}-{name}")
         return server
     return setup
+
+
+def within_slack_limits(posts):
+    """Each post fits what Slack takes: 50 blocks, one table of 100 rows, 3,000 characters a section."""
+    for post in posts:
+        for layout in post["layouts"]:
+            assert 0 < len(layout) <= slack.MAX_BLOCKS
+            assert sum(b["type"] == "table" for b in layout) <= 1
+            for b in layout:
+                if b["type"] == "section":
+                    assert len(b["text"]["text"]) <= slack.SECTION
+                elif b["type"] == "header":
+                    assert len(b["text"]["text"]) <= slack.HEADER
+                elif b["type"] == "context":
+                    assert all(len(e["text"]) <= slack.SECTION for e in b["elements"])
+                elif b["type"] == "table":
+                    assert len(b["rows"]) <= slack.MAX_ROWS and all(len(row) <= 20 for row in b["rows"])
+                    assert sum(len(cell["text"]) for row in b["rows"] for cell in row) <= 10000
+    return posts
 
 
 def test_preview_main_final(fpl):
@@ -111,12 +132,15 @@ def test_preview_main_final(fpl):
     assert server.posts == [] and "preview" in server.emails[-1][0]
     assert "bar is" not in server.emails[-1][1]          # never plans transfers it would then refuse to make
     assert "<table" in server.emails[-1][2]               # sent as HTML too
+    posts, urgent = server.slack[-1]
+    assert not urgent and len(within_slack_limits(posts)) > 1    # the report's detail goes in the thread
     assert news.WATCHLIST.exists()
 
     assert bot.tick(deadline - pd.Timedelta(hours=2), live=True) == "main"
     paths = [p for p, _ in server.posts]
     assert paths and paths[-1] == "my-team/99/" and set(paths) <= {"transfers/", "my-team/99/"}
     assert "main run done" in server.emails[-1][0]
+    within_slack_limits(server.slack[-1][0])
     assert executor.LOG.read_text().count('"outcome":"sent"') == len(paths)
     assert bot.FLAGS.exists()
 
@@ -139,6 +163,7 @@ def test_refusal_emails_action_needed_and_final_retries(fpl):
     deadline = server.deadlines[GW]
     assert bot.tick(deadline - pd.Timedelta(hours=2), live=True) == "main"
     assert server.emails[-1][0].startswith("ACTION NEEDED") and "HTTP 400" in server.emails[-1][1]
+    assert server.slack[-1][1]                           # urgent: email and Slack, with an @-mention
     assert "main" not in schedule.load(GW, deadline)["done"]
     assert bot.tick(deadline - pd.Timedelta(hours=1.5), live=True) == "main"     # next tick tries again
     server.refuse.clear()
@@ -204,6 +229,9 @@ def test_suspended_player_goes_with_a_free_transfer_and_fixtures_show(fpl):
     assert f"FIXTURES, GW{GW}–{GW + 2}" in text and f"{name}(OUT)" in text
     assert f"GW{GW}–{GW + 1}, so he goes now" in text or f"{name} goes now" in text
     assert "Badge" not in html and ">OUT<" in html
+    cells = [cell["text"] for post in within_slack_limits(server.slack[-1][0]) for b in post["layouts"][0]
+             if b["type"] == "table" for row in b["rows"] for cell in row]
+    assert f"{name} (OUT)" in cells and any(c.endswith("🔴 out") for c in cells)
 
     assert bot.tick(deadline - pd.Timedelta(hours=2), live=True) == "main"
     sent = [p for path, p in server.posts if path == "transfers/"]

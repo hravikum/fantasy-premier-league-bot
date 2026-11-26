@@ -110,10 +110,12 @@ def load_context(now, live, need_login=False):
 
 
 def email(ctx_or_live, subject, message):
-    """Send a doc.Message as HTML with a plain-text copy. Shadow runs are marked in the subject."""
+    """Send a doc.Message: to Slack once it's set up, and by email as HTML with a plain-text copy
+    (mailer.py says when). Shadow runs are marked in the subject; an alert always goes both ways."""
     import mailer
     live = ctx_or_live.live if isinstance(ctx_or_live, Context) else ctx_or_live
-    mailer.send(("" if live else "[shadow] ") + subject, doc.to_text(message), doc.to_html(message))
+    mailer.send(("" if live else "[shadow] ") + subject, doc.to_text(message), doc.to_html(message),
+                slack_posts=doc.to_slack(message), urgent=message.alert)
 
 
 def pills(ctx):

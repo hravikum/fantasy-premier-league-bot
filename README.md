@@ -2,8 +2,9 @@
 
 Runs one Fantasy Premier League team. Before every deadline it projects every player's expected
 points for the coming weeks, plans transfers, lineup, captain and chips, and makes the changes.
-Hits and chips wait for your OK. Everything is emailed (formatted HTML, with a plain-text copy),
-and anything that fails sends an **ACTION NEEDED** email so you can step in.
+Hits and chips wait for your OK. Everything is posted to a Slack channel once Slack is set up, or
+emailed (formatted HTML, with a plain-text copy) until then, and anything that fails sends an
+**ACTION NEEDED** message by both Slack and email so you can step in.
 
 ## Each gameweek
 
@@ -96,7 +97,8 @@ replays have no injury news, which the live bot does have.
 GitHub repository settings:
 - Variables: `FPL_TEAM_ID`, and `BOT_LIVE` (`true` to send changes).
 - Secrets: `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, `FPL_REFRESH_TOKEN`, `FPL_STATE_KEY`, and
-  optionally `EMAIL_TO`.
+  optionally `EMAIL_TO`, `SLACK_BOT_TOKEN` and `SLACK_CHANNEL` (Slack, below).
+- Optional variables for Slack: `SLACK_USER_ID`, `EMAIL_TOO`.
 
 **Timers (once, on the Mac):**
 
@@ -133,11 +135,39 @@ The bot renews the token on every run and keeps it encrypted on `bot-state`. Don
 token anywhere else, such as on your Mac. If an email says FPL refused the login, repeat these
 steps; the new secret takes over on the next run.
 
+**Slack.** With the secrets `SLACK_BOT_TOKEN` and `SLACK_CHANNEL` set, every message goes to a Slack
+channel instead of email (`mailer.py`, `slack.py`, `doc.to_slack`):
+- The message in the channel has the warnings, your decisions and what the bot changes; the
+  report (transfers, fixtures, XI, plan, chips, top projections) goes in its thread, a table a reply.
+- Fixture colours become 🟢 (easier) and 🔴 (harder), as Slack's tables can't colour text.
+- **ACTION NEEDED** messages and failure alerts always go by email too, and @-mention you in Slack
+  when the variable `SLACK_USER_ID` is set.
+- If a Slack post fails, that message is emailed instead. If Slack refuses a layout, the message is
+  posted as plain text.
+- While the variable `EMAIL_TOO` is `true`, everything is emailed as well (the trial).
+
+Setting it up, once (same workspace as the ESPN bot, its own app and channel):
+1. In the workspace, create a channel such as `#fpl-bot`. On your phone, set its notifications to
+   every new message.
+2. api.slack.com/apps → Create New App → From a manifest: pick the workspace, paste
+   `slack-app-manifest.yml`, create, then Install to workspace. This is a new app ("FPL Bot"), not
+   the ESPN bot's "Fantasy Bot".
+3. OAuth & Permissions shows the Bot User OAuth Token (`xoxb-…`): the secret `SLACK_BOT_TOKEN`. The
+   channel's id is at the bottom of its About tab (click the channel's name): the secret
+   `SLACK_CHANNEL`. Your member ID (your profile, ⋮, Copy member ID): the variable `SLACK_USER_ID`.
+4. In the channel, type `/invite @FPL Bot`.
+5. Set the variable `EMAIL_TOO` to `true`, then Actions → Bot → Run workflow → `dry-run`: the plan
+   should appear in the channel, with the report in its thread, and in your inbox.
+
+After a gameweek in which every email had its Slack twin, delete `EMAIL_TOO`. Until the Yes/No
+buttons come to Slack (Phase 2), a decision's Yes and No in Slack are the same email links as in
+the email. To go back to email only, delete the two Slack secrets.
+
 **Run by hand:** Actions → Bot → Run workflow.
 
 | Job | What it does |
 |---|---|
-| `dry-run` | The report, emailed |
+| `dry-run` | The report, sent (Slack or email) |
 | `preview`, `main`, `final` | Runs that job now; respects `BOT_LIVE`; doesn't touch the schedule |
 | `check-write` | The no-op write check |
 | `explain` (with a player name) | Why the model rates him as it does, and what he'd add to your team |
@@ -147,7 +177,7 @@ steps; the new secret takes over on the next run.
 ```
 python3 recommend.py --team 1234567        # the report from public data
 python3 explain.py Haaland --team 1234567  # why the model rates a player as it does, and his value to your team
-python3 -m pytest -q                       # 42 tests, including preview → main → final against a fake FPL
+python3 -m pytest -q                       # 71 tests, including preview → main → final against a fake FPL
 python3 backtest.py                        # projections vs. past gameweeks
 ```
 

@@ -18,7 +18,7 @@ on:
         type: string
         default: ""
       email:
-        description: Email the dry run
+        description: Send the dry run (Slack, and email while EMAIL_TOO is true)
         type: boolean
         default: true
   push:
@@ -66,3 +66,7 @@ jobs:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+          SLACK_USER_ID: ${{ vars.SLACK_USER_ID }}     # your member ID: alerts @-mention you
+          EMAIL_TOO: ${{ vars.EMAIL_TOO }}             # "true" while Slack is on trial: email as well

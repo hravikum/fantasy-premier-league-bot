@@ -397,7 +397,8 @@ def main():
     print(doc.to_text(message))
     if args.email:
         import mailer
-        mailer.send(f"GW{next_gw} plan (deadline {deadline})", doc.to_text(message), doc.to_html(message))
+        mailer.send(f"GW{next_gw} plan (deadline {deadline})", doc.to_text(message), doc.to_html(message),
+                    slack_posts=doc.to_slack(message))
 
 
 if __name__ == "__main__":

@@ -11,8 +11,8 @@ cd "$(dirname "$0")" || exit 1
 RUN_URL="${GITHUB_SERVER_URL:-}/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID:-}"
 RETRY_WAITS="${RETRY_WAITS:-0 10 30}"     # seconds before each try
 
-alert() {   # alert SUBJECT BODY: email without ever failing the script
-    python -c "import sys, mailer; mailer.send(sys.argv[1], sys.argv[2])" "$1" "$2 Run: $RUN_URL" || true
+alert() {   # alert SUBJECT BODY: email (and Slack, with an @-mention) without ever failing the script
+    python -c "import sys, mailer; mailer.send(sys.argv[1], sys.argv[2], urgent=True)" "$1" "$2 Run: $RUN_URL" || true
 }
 
 # Bring back state/. A failed fetch is not the same as no branch: GitHub sometimes doesn't answer,
