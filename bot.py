@@ -160,8 +160,15 @@ def log_flags(ctx, job):
 
 # ---------------------------------------------------------------- jobs
 
+def write_watchlist(ctx, plan):
+    """The players the Claude news check looks at: the squad plus the plan's buys this week and next."""
+    later = [i for w in plan.weeks[:2] for i in w.transfers_in]
+    news.write_watchlist(ctx.gw, ctx.deadline, list(ctx.team.squad) + later, ctx.players, ctx.season.teams)
+
+
 def dry_run(ctx, send_email):
     analysis = recommend.analyse(ctx.per_gw, ctx.players, ctx.team, ctx.horizon_gws)
+    write_watchlist(ctx, analysis.base)       # so the news check follows the current plan
     actions = executor.decide(ctx.team, analysis.base.weeks[0], analysis.wait.weeks[0], analysis.gain, ctx.players,
                               sold=analysis.sold)
     blocks = context_blocks(ctx) + executor.describe(actions, ctx.players, "What the bot would change on FPL") + \
@@ -201,8 +208,7 @@ def preview(ctx):
     if decisions:
         code = approvals.new_code()
         approvals.save({"gw": ctx.gw, "code": code, "created": ctx.now.isoformat(), "decisions": decisions})
-    later = [i for w in a.base.weeks[:2] for i in w.transfers_in]
-    news.write_watchlist(ctx.gw, ctx.deadline, list(ctx.team.squad) + later, ctx.players, ctx.season.teams)
+    write_watchlist(ctx, a.base)
 
     blocks = context_blocks(ctx)
     if decisions:
