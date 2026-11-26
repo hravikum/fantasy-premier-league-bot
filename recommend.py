@@ -5,6 +5,7 @@ python3 recommend.py --team 1234567 --email      print it and email it
 options: --horizon 6 (gameweeks to plan over), --ft N (override free transfers)
 """
 import argparse
+from collections import Counter
 from dataclasses import dataclass, replace
 from typing import NamedTuple
 
@@ -193,6 +194,7 @@ def report(analysis, per_gw, pf, players, fixtures, teams, team, horizon_gws):
         blocks.append(doc.Para(f"{analysis.held_back} more move(s) in the full plan added less than "
                                f"{executor.GAIN_PER_TRANSFER:.0f} expected point each over waiting, so they wait.",
                                tone="muted"))
+    blocks += club_limit_blocks(analysis.base, players, teams, team)
     blocks += fixture_blocks(analysis.base, per_gw, pf, players, teams, team)
 
     blocks.append(doc.Heading(f"Starting XI for GW{first.gw}: {first.xp:.1f} expected with captain"))
@@ -216,6 +218,28 @@ def report(analysis, per_gw, pf, players, fixtures, teams, team, horizon_gws):
         blocks.append(doc.Para("Doubles and blanks: " + " | ".join(notes)))
     blocks += top_projections(per_gw[horizon_gws], players)
     return blocks
+
+
+def club_limit_blocks(plan, players, teams, team):
+    """What the soft club limit did: triple-ups this week's moves end, and ones the plan keeps."""
+    by_id = players.set_index("id")
+    short = teams.set_index("id")["short_name"]
+    count = lambda ids: Counter(by_id.loc[list(ids), "team"])
+    before, weeks = count(team.squad), [count(w.xi + w.bench) for w in plan.weeks]
+    notes = [f"This week's moves end your {short[t]} triple-up." for t, n in before.items()
+             if n >= 3 and weeks[0][t] < 3]
+    for t, n in weeks[0].items():
+        if n < 3:
+            continue
+        names = ", ".join(by_id.loc[i, "web_name"] for i in plan.weeks[0].xi + plan.weeks[0].bench
+                          if by_id.loc[i, "team"] == t)
+        drop = next((w.gw for w, c in zip(plan.weeks, weeks) if c[t] < 3), None)
+        notes.append(f"3 from {short[t]} ({names}): " + (f"the plan drops to 2 in GW{drop}." if drop else
+                     "kept through the plan, so the third is worth more than the limit's cost."))
+    if not notes:
+        return []
+    return [doc.Para([doc.Tone("Club limit: ", bold=True), " ".join(notes),
+                      " (A third player from one club has to add 2+ expected points over 6 GWs.)"], tone="muted")]
 
 
 FIXTURE_WEEKS = 3

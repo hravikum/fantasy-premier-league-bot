@@ -36,6 +36,9 @@ class Settings:
     must_sell: dict = field(default_factory=dict)   # gameweek -> ids that must go that week (any replacement)
     club_max: dict = field(default_factory=dict)    # team id -> most players from that club (FPL's limit is 3)
     defence_max: int | None = None                  # most keepers + defenders from any one club
+    # Soft club limit (your choice, Nov 26): each gameweek with 3 players from one club costs this,
+    # discounted like points, so a third player has to add 2+ expected points over 6 gameweeks.
+    triple_cost: float = 2.0 / 6
     time_limit: float = 120.0
 
 
@@ -114,6 +117,8 @@ def plan(xp, players, squad, bank, free_transfers, sell_prices=None, settings=Se
     waste = v.add(T, 0, MAX_FREE_TRANSFERS)                     # free transfers lost to the cap
     wild = v.add(T, 0, 15)                                      # transfers made free by a chip
     money = v.add(T, 0, 1000, integer=False)                    # bank after each GW's transfers
+    clubs = list(pool["team"].unique())
+    triple = [v.add(len(clubs), integer=False) for _ in gws]    # a club with 3 players (soft limit)
 
     rows, lb, ub = [], [], []
 
@@ -130,6 +135,7 @@ def plan(xp, players, squad, bank, free_transfers, sell_prices=None, settings=Se
         objective[x[t]] -= weight * pts[:, t] * (1 if boost else settings.bench_weight)
         objective[c[t]] -= weight * pts[:, t] * (2 if gw == settings.triple_captain_gw else 1)
         objective[paid[t]] += weight * settings.hit_cost
+        objective[triple[t]] += weight * settings.triple_cost
 
         for i in range(n):
             # squad flow: x_t = x_{t-1} + in - out
@@ -145,9 +151,11 @@ def plan(xp, players, squad, bank, free_transfers, sell_prices=None, settings=Se
             lo, hi = {"GK": (1, 1), "DEF": (3, 5), "MID": (2, 5), "FWD": (1, 3)}[pos]
             constrain({s[t][i]: 1 for i in members}, lo, hi)
         defensive = pool["position"].isin(["GK", "DEF"]).to_numpy()
-        for team in pool["team"].unique():
+        for k, team in enumerate(clubs):
             members = np.where(pool["team"].to_numpy() == team)[0]
             constrain({x[t][i]: 1 for i in members}, -np.inf, min(3, settings.club_max.get(team, 3)))
+            if settings.triple_cost:                 # triple[t][k] is 1 when the club has 3
+                constrain({**{x[t][i]: 1 for i in members}, triple[t][k]: -1}, -np.inf, 2)
             if settings.defence_max is not None:
                 constrain({x[t][i]: 1 for i in members if defensive[i]}, -np.inf, settings.defence_max)
         constrain({s[t][i]: 1 for i in range(n)}, 11, 11)

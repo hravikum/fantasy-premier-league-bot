@@ -40,6 +40,13 @@ A failed main run is retried at the next tick, and the final check is a last ret
     clear the bar. That frees his squad spot before his price drops. Exception: if the best plan
     still has him (kept, or bought back) at the end of the 6 weeks, he's worth keeping and stays.
     No free transfer left means he waits; a hit for him would need your yes like any other.
+  - **Soft club limit.** FPL allows 3 players per club. The bot adds a third from one club only if
+    he adds 2+ expected points over 6 gameweeks compared with the best alternative (the plan pays
+    1/3 point a week for each club it has 3 from). This spreads the risk of one club having a bad
+    week at little cost. The email says when a move ends a triple-up, or why the plan keeps one.
+    `python explain.py --squad --team <id>` (or the explain job with player `--squad=3`) shows
+    ownership, how our projections compare with FPL's and the crowd's, club exposure, the defences
+    you're backing, and what stricter limits would cost.
 - **Fixtures table**: every plan and preview email lists your squad, this week's buys and the
   plan's buys for the next two weeks, with each one's next 3 opponents and expected points. The
   opponent is green for an easier fixture than average for that player and red for a harder one

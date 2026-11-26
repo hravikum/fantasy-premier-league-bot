@@ -185,3 +185,30 @@ def test_club_and_defence_caps():
             ids = week.xi + week.bench
             check_rules(week, players, ids)
             assert check(ids)
+
+
+def test_soft_club_limit():
+    """A third player from one club must add more than the limit's cost (1/3 a week here)."""
+    players, xp = make_pool()
+    squad = cheapest_squad(players)
+    by_id = players.set_index("id")
+    counts = Counter(by_id.loc[squad, "team"])
+    club = next(t for t, n in counts.items() if n == 2)
+    outsider = players[~players.id.isin(squad) & (players.position == "MID")].iloc[0]["id"]
+    players.loc[players.id == outsider, ["team", "price"]] = [club, 4.0]
+    flat = xp.copy()
+    flat.loc[:] = 2.0
+    flat.loc[[i for i in squad if by_id.loc[i, "team"] == club]] = 6.0     # the two already there stay
+
+    def bought(extra, cost=optimizer.Settings().triple_cost):
+        flat.loc[outsider] = 2.0 + extra
+        plan = optimizer.plan(flat, players, squad, 10.0, 5, settings=optimizer.Settings(triple_cost=cost))
+        if any(outsider in w.xi + w.bench for w in plan.weeks):
+            assert max(Counter(by_id.loc[w.xi + w.bench, "team"].where(lambda t: t.index != outsider, club))[club]
+                       for w in plan.weeks) == 3
+            return True
+        return False
+
+    assert not bought(0.2)                  # +0.2 a week doesn't pay for the third player
+    assert bought(0.2, cost=0)              # ...though without the limit he'd be bought
+    assert bought(1.0)                      # +1.0 a week does

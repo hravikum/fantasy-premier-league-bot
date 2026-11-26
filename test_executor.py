@@ -101,6 +101,8 @@ def ruled_out_scenario(back_xp, free=5, sub_xp=2.3):
     A defender outside the squad projects sub_xp: replacing the suspended one gains little each week."""
     players, xp = fixtures.make_pool()
     squad = fixtures.cheapest_squad(players)
+    for k, i in enumerate(squad):              # at most 2 per club, so the soft club limit stays out of it
+        players.loc[players.id == i, "team"] = k % 8 + 1
     players["status"], players["chance"], players["news"] = "a", 100.0, ""
     flat = xp.copy()
     flat.loc[:] = 2.0
