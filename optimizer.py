@@ -34,6 +34,8 @@ class Settings:
     transfer_limit: dict = field(default_factory=dict)   # gameweek -> most transfers allowed
     forced: dict = field(default_factory=dict)   # gameweek -> (ids in, ids out): exactly these transfers
     must_sell: dict = field(default_factory=dict)   # gameweek -> ids that must go that week (any replacement)
+    club_max: dict = field(default_factory=dict)    # team id -> most players from that club (FPL's limit is 3)
+    defence_max: int | None = None                  # most keepers + defenders from any one club
     time_limit: float = 120.0
 
 
@@ -142,9 +144,12 @@ def plan(xp, players, squad, bank, free_transfers, sell_prices=None, settings=Se
             constrain({x[t][i]: 1 for i in members}, quota, quota)
             lo, hi = {"GK": (1, 1), "DEF": (3, 5), "MID": (2, 5), "FWD": (1, 3)}[pos]
             constrain({s[t][i]: 1 for i in members}, lo, hi)
+        defensive = pool["position"].isin(["GK", "DEF"]).to_numpy()
         for team in pool["team"].unique():
             members = np.where(pool["team"].to_numpy() == team)[0]
-            constrain({x[t][i]: 1 for i in members}, -np.inf, 3)
+            constrain({x[t][i]: 1 for i in members}, -np.inf, min(3, settings.club_max.get(team, 3)))
+            if settings.defence_max is not None:
+                constrain({x[t][i]: 1 for i in members if defensive[i]}, -np.inf, settings.defence_max)
         constrain({s[t][i]: 1 for i in range(n)}, 11, 11)
         constrain({c[t][i]: 1 for i in range(n)}, 1, 1)
 

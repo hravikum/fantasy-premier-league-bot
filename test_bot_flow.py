@@ -209,3 +209,19 @@ def test_suspended_player_goes_with_a_free_transfer_and_fixtures_show(fpl):
     sent = [p for path, p in server.posts if path == "transfers/"]
     assert sent and hurt in [t["element_out"] for t in sent[0]["transfers"]]
     assert "ruled out" in server.emails[-1][1]
+
+
+def test_squad_check_runs(fpl, monkeypatch, capsys):
+    import explain
+    import team as team_module
+    server = fpl()
+    def public(entry, players):
+        squad = [p["element"] for p in server.picks]
+        by_id = players.set_index("id")
+        return team_module.Team(entry, "Test FC", squad, 1.5, 2, {i: by_id.loc[i, "price"] for i in squad})
+    monkeypatch.setattr(team_module, "load", public)
+    monkeypatch.setattr(pd.Timestamp, "now", staticmethod(lambda tz=None: server.deadlines[GW] - pd.Timedelta(hours=24)))
+    report = explain.squad_check(99)
+    print(report)
+    for part in ["1. OWNERSHIP", "2. HOW OUR PROJECTIONS COMPARE", "3. CLUB EXPOSURE", "4. DEFENCES", "5. WHAT LIMITS"]:
+        assert part in report

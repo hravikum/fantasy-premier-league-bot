@@ -168,3 +168,20 @@ if __name__ == "__main__":
         if name.startswith("test_"):
             fn()
             print("ok", name)
+
+
+def test_club_and_defence_caps():
+    players, xp = make_pool()
+    squad = cheapest_squad(players)
+    by_id = players.set_index("id")
+    club = Counter(by_id.loc[squad, "team"]).most_common(1)[0][0]
+    for settings, check in [
+            (optimizer.Settings(club_max={club: 1}),
+             lambda ids: sum(by_id.loc[ids, "team"] == club) <= 1),
+            (optimizer.Settings(defence_max=1),
+             lambda ids: max(Counter(by_id.loc[ids][by_id.loc[ids, "position"].isin(["GK", "DEF"])].team).values()) <= 1)]:
+        plan = optimizer.plan(xp, players, squad, 100.0, 15, settings=settings)
+        for week in plan.weeks:
+            ids = week.xi + week.bench
+            check_rules(week, players, ids)
+            assert check(ids)

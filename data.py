@@ -58,6 +58,7 @@ def _players(raw):
         "chance": pd.to_numeric(p["chance_of_playing_next_round"], errors="coerce"),
         "news": p["news"].fillna(""),
         "selected_by": pd.to_numeric(p["selected_by_percent"], errors="coerce"),
+        "ep_next": pd.to_numeric(p.get("ep_next"), errors="coerce"),     # FPL's own projection
         # FPL's set-piece order (1 = first choice); blank if not on the list
         "pen_order": pd.to_numeric(p.get("penalties_order"), errors="coerce"),
     })
