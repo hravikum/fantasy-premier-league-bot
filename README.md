@@ -150,12 +150,12 @@ Setting it up, once (same workspace as the ESPN bot, its own app and channel):
 1. In the workspace, create a channel such as `#fpl-bot`. On your phone, set its notifications to
    every new message.
 2. api.slack.com/apps → Create New App → From a manifest: pick the workspace, paste
-   `slack-app-manifest.yml`, create, then Install to workspace. This is a new app ("FPL Bot"), not
+   `slack-app-manifest.yml`, create, then Install to workspace. This is a new app ("Fantasy Premier League Bot"), not
    the ESPN bot's "Fantasy Bot".
 3. OAuth & Permissions shows the Bot User OAuth Token (`xoxb-…`): the secret `SLACK_BOT_TOKEN`. The
    channel's id is at the bottom of its About tab (click the channel's name): the secret
    `SLACK_CHANNEL`. Your member ID (your profile, ⋮, Copy member ID): the variable `SLACK_USER_ID`.
-4. In the channel, type `/invite @FPL Bot`.
+4. In the channel, type `/invite @Fantasy Premier League Bot`.
 5. Set the variable `EMAIL_TOO` to `true`, then Actions → Bot → Run workflow → `dry-run`: the plan
    should appear in the channel, with the report in its thread, and in your inbox.
 

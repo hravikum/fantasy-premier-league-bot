@@ -2,7 +2,7 @@
 
 A bot token rather than an incoming webhook: a webhook can't post into a thread, and the reports
 put their detail in replies under the message. From .env or the environment:
-    SLACK_BOT_TOKEN   xoxb-..., the FPL Bot app's Bot User OAuth Token (OAuth & Permissions page)
+    SLACK_BOT_TOKEN   xoxb-..., the Fantasy Premier League Bot app's Bot User OAuth Token (OAuth & Permissions page)
     SLACK_CHANNEL     the channel's id, C followed by letters and digits (bottom of its About tab)
     SLACK_USER_ID     optional: your member ID, so a message that needs you @-mentions you
 The app needs the chat:write scope and has to be invited to the channel (slack-app-manifest.yml).
