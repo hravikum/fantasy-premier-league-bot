@@ -11,7 +11,8 @@ Jobs (schedule.py has the timing):
            that needs your OK. Writes the watchlist for the Claude news check. Changes nothing.
   main     ~2 h before: logs in, reads the news check and your reply, makes the changes, reads them
            back from FPL and emails what it did. If anything fails: an ACTION NEEDED email.
-  final    ~45 min before: if the main run didn't finish, runs it now; otherwise re-checks injuries
+  final    ~45 min before: if the main run didn't finish, runs it now; otherwise re-checks injuries,
+           unless you changed the team on FPL after the main run (then it only warns of new injuries)
            and fixes the lineup and captain if needed. Emails only if it changed or failed something.
 Changes are only sent when the repository variable BOT_LIVE is "true". Until then every job runs
 as a shadow: the same emails, marked [shadow], and nothing is sent.
@@ -286,8 +287,10 @@ def approved_actions(ctx, approved, notes):
     return None, None
 
 
-def main_run(ctx, job="main"):
-    """The changes for the coming deadline. Returns (ok, chip played)."""
+def main_run(ctx, job="main", record=None):
+    """The changes for the coming deadline. Returns (ok, chip played). On success, notes in record
+    (the gameweek's schedule record) the team it left on FPL, so the final check can tell if you
+    changed it afterwards (left_by_main)."""
     log_flags(ctx, job)
     notes, proposal = [], approvals.load(ctx.gw)
     decisions = proposal["decisions"] if proposal else []
@@ -320,13 +323,18 @@ def main_run(ctx, job="main"):
                                   chip=active, chip_already_set=bool(active), sold=sold)
         chip = active
     ok = executor.send(actions, ctx.token, ctx.deadline, ctx.live, job, now=ctx.clock())
-    problems = []
+    problems, after = [], ctx.team.picks          # what FPL holds when nothing was sent
     if ctx.live and any(a.outcome == "sent" for a in actions):
         try:
-            problems = executor.verify(actions, data.get(f"my-team/{ctx.team.entry}/", token=ctx.token))
+            mine = data.get(f"my-team/{ctx.team.entry}/", token=ctx.token)
+            problems = executor.verify(actions, mine)
+            after = mine["picks"]
         except Exception as problem:
             problems = [f"couldn't read my-team back to check ({type(problem).__name__}: {problem})"]
     success = ok and not problems
+    if success and record is not None:
+        record["left_by_main"] = {"picks": team_key(after),
+                                  "chances": {str(i): chance(ctx.players, i) for i in ctx.team.squad}}
     lineup = next((a for a in actions if a.kind == "lineup"), None)
     blocks = []
     if not success:
@@ -356,6 +364,41 @@ def main_run(ctx, job="main"):
     return success, chip
 
 
+def team_key(picks):
+    """A team as FPL holds it (who, in which slot, captain, vice-captain), comparable after a JSON round trip."""
+    return sorted([int(p["element"]), int(p["position"]), bool(p["is_captain"]), bool(p["is_vice_captain"])]
+                  for p in picks)
+
+
+def chance(players, element):
+    """FPL's chance of playing next round, 0-100 (100 for an unflagged player)."""
+    value = players.set_index("id").loc[element, "chance"]
+    return int(value) if value == value else 0
+
+
+def leave_your_changes(ctx, left):
+    """You changed the team on FPL after the main run (a different captain, bench or player), so it's
+    yours now: the final check changes nothing. It tells you only if a starter's chance of playing has
+    dropped since the main run, which needs you before the deadline. Returns True (nothing failed)."""
+    by_id = ctx.players.set_index("id")
+    worse = []
+    for p in sorted(ctx.team.picks, key=lambda p: p["position"]):
+        before, now = left["chances"].get(str(p["element"]), 100), chance(ctx.players, p["element"])
+        if p["position"] <= 11 and now < before:
+            worse.append(f"{by_id.loc[p['element'], 'web_name']}: {by_id.loc[p['element'], 'news'] or 'flagged'} "
+                         f"({before}% → {now}% chance of playing)")
+    if not worse:
+        print("Final check: you changed the team after the main run, so it's left as you set it.")
+        return True
+    email(True, f"ACTION NEEDED: GW{ctx.gw} starters flagged since your changes",
+          message(ctx, f"GW{ctx.gw} final check: ACTION NEEDED", [doc.Callout("Action needed", [
+              "You changed your team on FPL after the main run, so the bot leaves the lineup to you.",
+              "Since the main run:", *worse,
+              doc.Tone(f"Check your lineup on the FPL site before {ctx.local_deadline} ET.", bold=True)], "bad")],
+              alert=True))
+    return True
+
+
 def lineup_section(ctx, payload):
     """The lineup a request sets, as email blocks."""
     picks = sorted(payload["picks"], key=lambda p: p["position"])
@@ -369,12 +412,16 @@ def lineup_section(ctx, payload):
 
 
 def final_check(ctx, record):
-    """Lineup and captain against the latest injury news. Returns True if all is well."""
+    """Lineup and captain against the latest injury news, unless you changed the team on FPL after the
+    main run (leave_your_changes). Returns True if all is well."""
     if "main" not in record["done"]:
-        ok, chip = main_run(ctx, job="final")
+        ok, chip = main_run(ctx, job="final", record=record)
         return ok, chip
     log_flags(ctx, "final")
     chip = record.get("chip") or ctx.team.active_chip
+    left = record.get("left_by_main")
+    if left and team_key(ctx.team.picks) != left["picks"]:
+        return leave_your_changes(ctx, left), chip
     if chip in TRANSFER_CHIPS:
         by_id = ctx.players.set_index("id")
         out = [by_id.loc[p["element"], "web_name"] for p in ctx.team.picks
@@ -456,7 +503,7 @@ def tick(now, live):
     if job == "preview":
         ok, chip = preview(ctx), None
     elif job == "main":
-        ok, chip = main_run(ctx)
+        ok, chip = main_run(ctx, record=record)
     else:
         ok, chip = final_check(ctx, record)
     if job == "final" and "main" not in record["done"] and ok:

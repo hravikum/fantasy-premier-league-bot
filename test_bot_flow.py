@@ -151,6 +151,51 @@ def test_preview_main_final(fpl):
     assert set(schedule.load(GW, deadline)["done"]) == {"preview", "main", "final"}
 
 
+def change_captain(server):
+    """You, on the FPL site: the vice-captain becomes captain and the captain vice-captain."""
+    for p in server.picks:
+        p["is_captain"], p["is_vice_captain"] = p["is_vice_captain"], p["is_captain"]
+
+
+def test_your_changes_after_the_main_run_are_left_alone(fpl):
+    server = fpl()
+    deadline = server.deadlines[GW]
+    assert bot.tick(deadline - pd.Timedelta(hours=2), live=True) == "main"
+    change_captain(server)
+    mine, sent, emails = [dict(p) for p in server.picks], len(server.posts), len(server.emails)
+    assert bot.tick(deadline - pd.Timedelta(minutes=45), live=True) == "final"
+    assert len(server.posts) == sent and server.picks == mine and len(server.emails) == emails
+
+
+def test_a_starter_flagged_after_your_changes_is_flagged_to_you(fpl):
+    server = fpl()
+    deadline = server.deadlines[GW]
+    assert bot.tick(deadline - pd.Timedelta(hours=2), live=True) == "main"
+    change_captain(server)
+    starter = next(p["element"] for p in server.picks if p["position"] == 1)
+    row = server.players.id == starter
+    server.players.loc[row, ["status", "chance_of_playing_next_round", "news"]] = ["i", 0, "Hamstring injury"]
+    sent = len(server.posts)
+    assert bot.tick(deadline - pd.Timedelta(minutes=45), live=True) == "final"
+    assert len(server.posts) == sent                     # still yours: nothing sent
+    subject, body, _ = server.emails[-1]
+    assert subject.startswith("ACTION NEEDED") and "Hamstring injury (100% → 0% chance of playing)" in body
+    assert server.slack[-1][1]                           # urgent: Slack with an @-mention, and email
+
+
+def test_without_your_changes_the_final_check_still_fixes_the_lineup(fpl):
+    server = fpl()
+    deadline = server.deadlines[GW]
+    assert bot.tick(deadline - pd.Timedelta(hours=2), live=True) == "main"
+    starter = next(p["element"] for p in server.picks if p["position"] == 1)
+    row = server.players.id == starter
+    server.players.loc[row, ["status", "chance_of_playing_next_round", "news"]] = ["i", 0, "Hamstring injury"]
+    sent = len(server.posts)
+    assert bot.tick(deadline - pd.Timedelta(minutes=45), live=True) == "final"
+    assert len(server.posts) == sent + 1 and "lineup updated" in server.emails[-1][0]
+    assert starter not in [p["element"] for p in server.picks if p["position"] <= 11]
+
+
 def test_shadow_sends_nothing(fpl):
     server = fpl()
     deadline = server.deadlines[GW]

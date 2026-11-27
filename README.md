@@ -16,7 +16,7 @@ FPL's next deadline and runs whichever job is due (`schedule.py`), once per game
 | ~24 h before the deadline | **preview** | Emails the plan. Each hit or chip it wants is a numbered decision with its own **Yes / No** buttons (or reply "1 yes", "2 no"). Writes the watchlist for the news check. Changes nothing. |
 | a few hours before | **Claude news check** | A scheduled Claude task reads press conferences and predicted lineups for the watchlist players, and notes start chances that FPL's flags don't show yet. It runs every 6 hours and works only near a deadline. |
 | ~2 h before | **main run** | Logs in, applies the news and your reply, makes the changes, reads them back from FPL, and emails what it did. |
-| ~45 min before | **final check** | Re-checks injury news and fixes the lineup and captain if needed. If the main run failed, it runs it instead. Emails only if it changed or failed something. |
+| ~45 min before | **final check** | Re-checks injury news and fixes the lineup and captain if needed. If the main run failed, it runs it instead. Emails only if it changed or failed something. **If you changed your team on FPL after the main run** (captain, bench, a transfer), it leaves it as you set it and only warns you (ACTION NEEDED) if a starter's chance of playing has dropped since the main run. |
 
 A failed main run is retried at the next tick, and the final check is a last retry.
 
@@ -179,7 +179,7 @@ the email. To go back to email only, delete the two Slack secrets.
 ```
 python3 recommend.py --team 1234567        # the report from public data
 python3 explain.py Haaland --team 1234567  # why the model rates a player as it does, and his value to your team
-python3 -m pytest -q                       # 74 tests, including preview → main → final against a fake FPL
+python3 -m pytest -q                       # 77 tests, including preview → main → final against a fake FPL
 python3 backtest.py                        # projections vs. past gameweeks
 ```
 
