@@ -30,6 +30,7 @@ class Button:
     href: str
     tone: str | None = None
     plain: str = ""                # what plain text shows instead (the button is HTML only)
+    action: str = ""               # Slack: what a real button sends when tapped (approvals.py); without it, a link
 
 
 @dataclass
@@ -207,6 +208,7 @@ def to_html(message):
 
 MARKS = {"good": ":white_check_mark:", "bad": ":rotating_light:", "warn": ":warning:", "info": ":information_source:"}
 DOTS = {"good": "🟢", "bad": "🔴", "warn": "⚠️", "info": "🔵"}    # where Slack can't colour
+STYLES = {"good": "primary", "bad": "danger"}               # a real button's colour, by tone
 NUMBER = re.compile(r"^[£+-]?\d+(\.\d+)?$")         # a table column of these is aligned right
 ICONS = (("Transfers", "🔁"), ("Fixtures", "📅"), ("Starting XI", "👕"), ("Lineup", "👕"), ("Plan", "🗓️"),
          ("Chips", "🎟️"), ("Top projections", "📈"))
@@ -267,7 +269,16 @@ def _slack_block(block):
         return [slack.context(text)] if block.tone == "muted" and len(text) <= slack.SECTION else slack.sections(text)
     if isinstance(block, Callout):
         title = " ".join(t for t in (MARKS.get(block.tone, ""), f"*{slack.escape(block.title)}*" if block.title else "") if t)
-        return slack.sections("\n".join(([title] if title else []) + [_md(line).strip() for line in block.lines]))
+        out, text = [], [title] if title else []
+        for line in block.lines:
+            actions = [p for p in (line if isinstance(line, list) else [line]) if isinstance(p, Button) and p.action]
+            if not actions:
+                text.append(_md(line).strip())
+                continue
+            out += slack.sections("\n".join(text)) if text else []         # a line of real buttons
+            out.append(slack.actions([slack.button(b.text, b.action, STYLES.get(b.tone)) for b in actions]))
+            text = []
+        return out + (slack.sections("\n".join(text)) if text else [])
     if isinstance(block, Bullets):
         return slack.sections("\n".join("• " + _md(item).strip() for item in block.items))
     if isinstance(block, Table):

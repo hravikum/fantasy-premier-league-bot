@@ -94,7 +94,7 @@ def fpl(tmp_path, monkeypatch):
         monkeypatch.setattr(data, "get", server.get)
         monkeypatch.setattr(data, "post", server.post)
         monkeypatch.setattr(auth, "access_token", lambda: "token")
-        monkeypatch.setattr(approvals, "check", lambda code, since, count: (reply or {}, []))
+        monkeypatch.setattr(approvals, "check", lambda code, since, count, times=None: (reply or {}, []))
         server.emails, server.slack = [], []
         monkeypatch.setattr(mailer, "send", lambda subject, body, html=None, slack_posts=None, urgent=False:
                             server.emails.append((subject, body, html)) or server.slack.append((slack_posts, urgent))
@@ -234,6 +234,28 @@ def test_no_to_the_hit_yes_to_the_chip(fpl):
     assert schedule.load(GW, deadline)["chip"] == "bboost"
     body = server.emails[-1][1]
     assert "1. Take 1 hit: you said no" in body and "2. Play Bench Boost: you said yes" in body
+
+
+def test_a_tap_in_slack_counts_and_the_main_run_closes_the_buttons(fpl, monkeypatch):
+    server = fpl(reply={1: "no", 2: "no"})                # by email: no to both (no times: older than any tap)
+    deadline = server.deadlines[GW]
+    squad = [p["element"] for p in server.picks]
+    outsider = next(int(i) for i in server.players.sort_values("total_points", ascending=False).id if i not in squad)
+    approvals.save({"gw": GW, "code": "fpl-000000", "created": (deadline - pd.Timedelta(hours=24)).isoformat(),
+                    "slack_ts": "1.2", "decisions": [
+                        {"n": 1, "kind": "transfers", "in": [outsider], "out": [squad[5]], "hits": 1, "text": "Take 1 hit"},
+                        {"n": 2, "kind": "chip", "chip": "bboost", "text": "Play Bench Boost"}]})
+    message = {"text": "GW7 preview", "blocks": [{"type": "context", "block_id": "answer-2-yes-1764260000"}]}
+    closed = []
+    monkeypatch.setattr(slack, "configured", lambda: True)
+    monkeypatch.setattr(approvals, "slack_message", lambda ts: message)
+    monkeypatch.setattr(approvals, "close_slack", lambda proposal, found, note: closed.append((proposal["slack_ts"], note)))
+    assert bot.tick(deadline - pd.Timedelta(hours=2), live=True) == "main"
+    lineup = [payload for path, payload in server.posts if path == "my-team/99/"][-1]
+    assert lineup["chip"] == "bboost"                      # your tap in Slack
+    body = server.emails[-1][1]
+    assert "1. Take 1 hit: you said no" in body and "2. Play Bench Boost: you said yes" in body
+    assert closed and closed[0][0] == "1.2" and closed[0][1].startswith("🔒 Answers closed at the main run")
 
 
 def test_a_chip_you_played_yourself_is_kept(fpl):

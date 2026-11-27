@@ -5,6 +5,7 @@ import json
 import pytest
 import requests
 
+import approvals
 import doc
 import mailer
 import slack
@@ -37,7 +38,7 @@ def fake_slack(env):
     sent, replies = [], [Reply()]
 
     def post(url, data=None, headers=None, timeout=None):
-        sent.append({"url": url, "body": json.loads(data), "headers": headers})
+        sent.append({"url": url, "body": data if isinstance(data, dict) else json.loads(data), "headers": headers})
         reply = replies[min(len(sent), len(replies)) - 1]
         if isinstance(reply, Exception):
             raise reply
@@ -260,3 +261,89 @@ def test_a_long_callout_is_split_into_sections_that_fit():
     texts = [b["text"]["text"] for b in blocks if b["type"] == "section"]
     assert len(texts) > 1 and all(len(t) <= slack.SECTION for t in texts)
     assert "line 99" in texts[-1]
+
+
+# ---------------------------------------------------------------- Yes/No buttons (Phase 2)
+
+def test_mailer_returns_the_slack_message_ts_so_the_preview_can_read_your_taps(fake_slack, inbox, env):
+    assert mailer.send("GW12 preview", "body") == "1.2"
+    env.delenv("SLACK_BOT_TOKEN")
+    assert mailer.send("GW12 preview", "body") is True                  # emailed only
+
+
+def test_a_decision_gets_real_buttons_in_slack_and_links_in_the_email():
+    message = doc.Message("GW12 preview", blocks=[doc.Callout("1 decision for you", [
+        [doc.Tone("1. ", bold=True), "Play Bench Boost"], approvals.buttons("fpl-abc123", 1),
+        doc.Tone("Answer each one.", "muted")], "warn")])
+    blocks = blocks_of(doc.to_slack(message)[0])
+    assert texts(blocks[2:3]) == [":warning: *1 decision for you*\n*1.* Play Bench Boost"]
+    assert blocks[3] == slack.actions([slack.button("Yes", "fpl-abc123|1|yes", "primary"),
+                                       slack.button("No", "fpl-abc123|1|no", "danger")])
+    assert texts(blocks[4:5]) == ["Answer each one."]
+    assert "mailto:" in doc.to_html(message) and "fpl-abc123|1" not in doc.to_html(message)
+
+
+def test_your_answers_are_read_from_the_blocks_the_worker_writes():
+    message = {"blocks": [{"type": "actions", "block_id": "x"},
+                          {"type": "context", "block_id": "answer-1-yes-1764260000"},
+                          {"type": "context", "block_id": "answer-2-no-1764260100"},
+                          {"type": "context", "block_id": "answer-x-yes-1"}]}
+    assert approvals.slack_answers(message) == {1: ("yes", 1764260000), 2: ("no", 1764260100)}
+
+
+PROPOSAL = {"gw": 12, "code": "fpl-abc123", "created": "2026-11-26T16:44:00+00:00", "slack_ts": "1.2",
+            "decisions": [{"n": 1, "text": "Take 1 hit"}, {"n": 2, "text": "Play Bench Boost"}]}
+
+
+def test_the_later_answer_counts_whether_by_email_or_in_slack(env, monkeypatch):
+    def email(code, since, count, times):
+        times.update({1: 2000, 2: 2000})
+        return {1: "yes", 2: "yes"}, []
+    monkeypatch.setattr(approvals, "check", email)
+    message = {"blocks": [{"type": "context", "block_id": "answer-1-no-1000"},     # before the email: email wins
+                          {"type": "context", "block_id": "answer-2-no-3000"}]}    # after it: Slack wins
+    monkeypatch.setattr(approvals, "slack_message", lambda ts: message)
+    assert approvals.answers(PROPOSAL) == ({1: "yes", 2: "no"}, [], message)
+
+
+def test_one_source_down_still_counts_the_other_and_both_down_means_no(env, monkeypatch):
+    def broken(*args):
+        raise OSError("IMAP down")
+    monkeypatch.setattr(approvals, "check", broken)
+    monkeypatch.setattr(approvals, "slack_message", lambda ts: {"blocks": [{"block_id": "answer-2-yes-5"}]})
+    found, notes, _ = approvals.answers(PROPOSAL)
+    assert found == {2: "yes"} and "by email: OSError: IMAP down; your other answers counted" in notes[0]
+    monkeypatch.setattr(approvals, "slack_message", broken)
+    found, notes, message = approvals.answers(PROPOSAL)
+    assert found == {} and message is None and notes[0].endswith("so every decision was treated as no.")
+
+
+def test_closing_swaps_this_previews_buttons_for_a_note_and_keeps_your_answers(fake_slack):
+    sent, _ = fake_slack
+    message = {"text": "GW12 preview", "blocks": [
+        slack.section("1. Take 1 hit"), dict(slack.actions([slack.button("Yes", "fpl-abc123|1|yes")]), block_id="b1"),
+        {"type": "context", "block_id": "answer-1-yes-5", "elements": []},
+        slack.actions([slack.button("Other", "something-else")])]}
+    approvals.close_slack(PROPOSAL, message, "🔒 Answers closed at the main run, 11:13 ET.")
+    body = sent[0]["body"]
+    assert sent[0]["url"].endswith("/chat.update") and body["ts"] == "1.2" and body["channel"] == "C0TEST"
+    assert body["blocks"] == [message["blocks"][0], slack.context("🔒 Answers closed at the main run, 11:13 ET."),
+                              message["blocks"][2], message["blocks"][3]]
+
+
+def test_slack_check_posts_a_test_then_reads_your_answer_back(fake_slack):
+    sent, answer = fake_slack
+    answer(Reply(body={"ok": True, "messages": []}), Reply())
+    assert approvals.slack_check()                                        # nothing open: posts the test
+    assert sent[0]["body"]["channel"] == "C0TEST" and sent[1]["url"].endswith("/chat.postMessage")
+    posted = sent[1]["body"]["blocks"]
+    assert any(b["type"] == "actions" and b["elements"][0]["value"] == "fpl-test|1|yes" for b in posted)
+
+    sent.clear()
+    test = {"ts": "7.7", "text": "Slack buttons check", "blocks": posted + [
+        {"type": "context", "block_id": "answer-1-no-1764260000", "elements": []}]}
+    answer(Reply(body={"ok": True, "messages": [{"ts": "6.6", "blocks": []}, test]}), Reply(), Reply())
+    assert approvals.slack_check()                                        # open test: reads it and closes it
+    assert [r["url"].rsplit("/", 1)[1] for r in sent] == ["conversations.history", "chat.update", "chat.postMessage"]
+    assert sent[2]["body"]["thread_ts"] == "7.7" and "you said no" in sent[2]["body"]["text"]
+    assert not any(b["type"] == "actions" for b in sent[1]["body"]["blocks"])

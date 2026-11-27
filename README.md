@@ -147,10 +147,16 @@ channel instead of email (`mailer.py`, `slack.py`, `doc.to_slack`):
 - If a Slack post fails, that message is emailed instead. If Slack refuses a layout, the message is
   posted as plain text.
 - While the variable `EMAIL_TOO` is `true`, everything is emailed as well (the trial).
+- **Decisions** (a hit or a chip) have real Yes and No buttons in Slack. A tap writes your answer
+  under them ("✅ You said yes, Sat 2:02 PM ET"); tap the other one to change it. The email's
+  buttons and replies still work too: for each decision your latest answer counts, wherever you
+  gave it. The main run reads your answers, then swaps the buttons for "🔒 Answers closed".
+  Taps go to a small Cloudflare Worker (`slack-worker/worker.js`, free plan), which checks they
+  came from Slack and from you and writes the answer into the message; it keeps nothing itself.
 
 Setting it up, once (same workspace as the ESPN bot, its own app and channel):
-1. In the workspace, create a channel such as `#fpl-bot`. On your phone, set its notifications to
-   every new message.
+1. In the workspace, create a channel such as `#fantasy-premier-league`. On your phone, set its
+   notifications to every new message.
 2. api.slack.com/apps → Create New App → From a manifest: pick the workspace, paste
    `slack-app-manifest.yml`, create, then Install to workspace. This is a new app ("Fantasy Premier League Bot"), not
    the ESPN bot's "Fantasy Bot".
@@ -161,15 +167,34 @@ Setting it up, once (same workspace as the ESPN bot, its own app and channel):
 5. Set the variable `EMAIL_TOO` to `true`, then Actions → Bot → Run workflow → `dry-run`: the plan
    should appear in the channel, with the report in its thread, and in your inbox.
 
-After a gameweek in which every email had its Slack twin, delete `EMAIL_TOO`. Until the Yes/No
-buttons come to Slack (Phase 2), a decision's Yes and No in Slack are the same email links as in
-the email. To go back to email only, delete the two Slack secrets.
+The Yes/No buttons, once (about 15 minutes):
+1. Cloudflare, the account the ESPN bot's Worker uses: Workers & Pages → Create → Create Worker,
+   name it e.g. `fpl-slack-worker`, Deploy. Then Edit code, replace everything with
+   `slack-worker/worker.js`, and Deploy again.
+2. The Worker's Settings → Variables and Secrets, three secrets: `SLACK_SIGNING_SECRET` (the Slack
+   app's Basic Information page, App Credentials, Signing Secret), `SLACK_BOT_TOKEN` (the same
+   `xoxb-` token as the repository secret) and `SLACK_USER_ID` (your member ID). Copy the Worker's
+   address (`https://….workers.dev`).
+3. The Slack app (api.slack.com/apps): Interactivity & Shortcuts → On, paste the Worker's address
+   as the Request URL, Save. OAuth & Permissions → Bot Token Scopes → Add `channels:history`, then
+   reinstall the app when Slack asks. If the `xoxb-` token changed, update `SLACK_BOT_TOKEN` in the
+   repository and in the Worker.
+4. Actions → Bot → Run workflow → `slack-check`: a test decision appears in the channel. Tap Yes or
+   No: your answer should show under the buttons within a second or two. Run `slack-check` again: it
+   reads your answer back the way the main run will, says what it read in the test's thread, and
+   closes the test.
+
+To change the Worker later, paste the new `worker.js` the same way. Its tests: `node slack-worker/worker.test.js`.
+
+After a gameweek in which every email had its Slack twin, delete `EMAIL_TOO`. To go back to email
+only, delete the two Slack secrets.
 
 **Run by hand:** Actions → Bot → Run workflow.
 
 | Job | What it does |
 |---|---|
 | `dry-run` | The report, sent (Slack or email) |
+| `slack-check` | Tests the Slack Yes/No buttons: run, tap, run again (Slack, above) |
 | `preview`, `main`, `final` | Runs that job now; respects `BOT_LIVE`; doesn't touch the schedule |
 | `check-write` | The no-op write check |
 | `explain` (with a player name) | Why the model rates him as it does, and what he'd add to your team |
@@ -179,7 +204,7 @@ the email. To go back to email only, delete the two Slack secrets.
 ```
 python3 recommend.py --team 1234567        # the report from public data
 python3 explain.py Haaland --team 1234567  # why the model rates a player as it does, and his value to your team
-python3 -m pytest -q                       # 77 tests, including preview → main → final against a fake FPL
+python3 -m pytest -q                       # 85 tests, including preview → main → final against a fake FPL
 python3 backtest.py                        # projections vs. past gameweeks
 ```
 

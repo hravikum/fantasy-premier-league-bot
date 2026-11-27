@@ -112,11 +112,12 @@ def load_context(now, live, need_login=False):
 
 def email(ctx_or_live, subject, message):
     """Send a doc.Message: to Slack once it's set up, and by email as HTML with a plain-text copy
-    (mailer.py says when). Shadow runs are marked in the subject; an alert always goes both ways."""
+    (mailer.py says when). Shadow runs are marked in the subject; an alert always goes both ways.
+    Returns mailer.send's answer: the Slack message's ts if it was posted there."""
     import mailer
     live = ctx_or_live.live if isinstance(ctx_or_live, Context) else ctx_or_live
-    mailer.send(("" if live else "[shadow] ") + subject, doc.to_text(message), doc.to_html(message),
-                slack_posts=doc.to_slack(message), urgent=message.alert)
+    return mailer.send(("" if live else "[shadow] ") + subject, doc.to_text(message), doc.to_html(message),
+                       slack_posts=doc.to_slack(message), urgent=message.alert)
 
 
 def pills(ctx):
@@ -207,10 +208,11 @@ def preview(ctx):
         default = executor.decide(ctx.team, base.weeks[0], wait.weeks[0], gain, ctx.players, sold=sold)
     else:
         default = executor.decide(ctx.team, first, a.wait.weeks[0], a.gain, ctx.players, sold=a.sold)
-    code = None
+    code, proposal = None, None
     if decisions:
         code = approvals.new_code()
-        approvals.save({"gw": ctx.gw, "code": code, "created": ctx.now.isoformat(), "decisions": decisions})
+        proposal = {"gw": ctx.gw, "code": code, "created": ctx.now.isoformat(), "decisions": decisions}
+        approvals.save(proposal)
     write_watchlist(ctx, a.base)
 
     blocks = context_blocks(ctx)
@@ -218,13 +220,11 @@ def preview(ctx):
         lines = []
         for d in decisions:
             lines.append([doc.Tone(f"{d['n']}. ", bold=True), d["text"]])
-            lines.append([doc.Button("Yes", approvals.button_link(code, d["n"], "yes"), "good",
-                                     plain=f"   reply \"{d['n']} yes\" or \"{d['n']} no\""),
-                          doc.Button("No", approvals.button_link(code, d["n"], "no"), "bad")])
-        lines.append(doc.Tone("Answer each one: tap Yes or No (it starts an email to the bot; press Send), or reply "
-                              "with \"1 yes\", \"2 no\". Anything you don't answer is skipped, and a later answer "
-                              "replaces an earlier one, until the main run about 2 hours before the deadline.",
-                              "muted"))
+            lines.append(approvals.buttons(code, d["n"]))
+        lines.append(doc.Tone("Answer each one with its Yes or No: in Slack the tap is your answer; in the email it "
+                              "starts an email to the bot (press Send), or reply with \"1 yes\", \"2 no\". Anything "
+                              "you don't answer is skipped, and your latest answer counts until the main run, about "
+                              "2 hours before the deadline.", "muted"))
         blocks.append(doc.Callout(f"{len(decisions)} decision{'s' if len(decisions) > 1 else ''} for you", lines, "warn"))
     blocks += executor.describe(default, ctx.players, "At the main run (about 2 hours before the deadline)"
                                 + ("" if not decisions else ", if you say no" if len(decisions) == 1
@@ -236,7 +236,9 @@ def preview(ctx):
     subject = f"GW{ctx.gw} preview, deadline {ctx.local_deadline}"
     if decisions:
         subject += f": {len(decisions)} decision{'s' if len(decisions) > 1 else ''} for you [{code}]"
-    email(ctx, subject, msg)
+    sent = email(ctx, subject, msg)
+    if proposal and isinstance(sent, str):          # posted in Slack: the main run reads your taps from it
+        approvals.save(dict(proposal, slack_ts=sent))
     return True
 
 
@@ -294,14 +296,10 @@ def main_run(ctx, job="main", record=None):
     log_flags(ctx, job)
     notes, proposal = [], approvals.load(ctx.gw)
     decisions = proposal["decisions"] if proposal else []
-    answers = {}
+    answers, in_slack = {}, None
     if decisions:
-        try:
-            answers, unclear = approvals.check(proposal["code"], pd.Timestamp(proposal["created"]), len(decisions))
-            notes += unclear
-        except Exception as problem:
-            notes.append(f"Couldn't read your answers ({type(problem).__name__}: {problem}), so every decision "
-                         "was treated as no.")
+        answers, more, in_slack = approvals.answers(proposal)
+        notes += more
     said = {"yes": "you said yes", "no": "you said no", None: "no answer, so no"}
     for d in decisions:
         notes.append(f"{d['n']}. {d['text']}: {said[answers.get(d['n'])]}.")
@@ -323,6 +321,12 @@ def main_run(ctx, job="main", record=None):
                                   chip=active, chip_already_set=bool(active), sold=sold)
         chip = active
     ok = executor.send(actions, ctx.token, ctx.deadline, ctx.live, job, now=ctx.clock())
+    if in_slack is not None:                      # your answers are used: no more taps
+        try:
+            approvals.close_slack(proposal, in_slack,
+                                  f"🔒 Answers closed at the {job} run, {ctx.clock().tz_convert(EASTERN):%H:%M} ET.")
+        except Exception as problem:
+            print(f"(couldn't close the Slack buttons: {type(problem).__name__}: {problem})")
     problems, after = [], ctx.team.picks          # what FPL holds when nothing was sent
     if ctx.live and any(a.outcome == "sent" for a in actions):
         try:

@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "type": "module",
+  "description": "Lets Node run worker.js and its tests as the modules Cloudflare runs. Nothing to install.",
+  "scripts": {
+    "test": "node worker.test.js"
+  }
+}

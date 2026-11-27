@@ -1,7 +1,9 @@
 # The Slack app the FPL bot posts as: its own app, separate from the ESPN bot's "Fantasy Bot", so each
-# has its own token, signing secret and (later) tap address. Paste this at api.slack.com/apps >
-# Create New App > From a manifest (README, "Slack"). chat:write lets it post to channels it has been
-# invited to. The Yes/No buttons, overrides and /fpl come later (Phase 2 and 3 in the design notes).
+# has its own token, signing secret and tap address. Paste this at api.slack.com/apps > Create New App >
+# From a manifest (README, "Slack"). chat:write lets it post to channels it has been invited to, and
+# channels:history lets the main run read your Yes/No answers back from the preview (a public channel).
+# The buttons need Interactivity on, with the Worker's address as the Request URL (README, "Slack"):
+# it isn't in this file because a manifest won't take a placeholder address.
 display_information:
   name: Fantasy Premier League Bot
   description: Previews, decisions and results for your Fantasy Premier League team.
@@ -13,6 +15,7 @@ oauth_config:
   scopes:
     bot:
       - chat:write
+      - channels:history
 settings:
   org_deploy_enabled: false
   socket_mode_enabled: false

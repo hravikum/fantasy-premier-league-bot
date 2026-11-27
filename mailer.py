@@ -20,7 +20,8 @@ SUBJECT_PREFIX = "FPL: "
 
 
 def send(subject, body, html=None, slack_posts=None, urgent=False):
-    """Send one message. Returns True if it reached you, by Slack or by email; never raises.
+    """Send one message; never raises. Returns the Slack message's ts if it was posted there (the
+    preview keeps it to read your answers back), else True if it was emailed, else False.
 
     slack_posts is doc.to_slack's layout (the message, then replies in its thread); without it the
     message goes to Slack as the subject over the body in monospace.
@@ -36,7 +37,7 @@ def send(subject, body, html=None, slack_posts=None, urgent=False):
 
 
 def _post(subject, body, posts, urgent):
-    """The message in the channel, then its replies in the thread. True once the message is in:
+    """The message in the channel, then its replies in the thread. Its ts once the message is in:
     a lost reply only loses detail, which the email and the run's log still have."""
     posts = posts or [{"text": subject, "layouts": [slack.plain(subject, body)]}]
     first = posts[0]["layouts"]
@@ -55,7 +56,7 @@ def _post(subject, body, posts, urgent):
             slack.post_first(reply["text"], reply["layouts"], thread_ts=ts)
         except Exception as problem:
             print(f"(Slack thread reply failed: {type(problem).__name__}: {problem})")
-    return True
+    return ts
 
 
 def _email(subject, body, html):

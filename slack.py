@@ -41,8 +41,9 @@ def configured():
     return bool(os.getenv("SLACK_BOT_TOKEN") and os.getenv("SLACK_CHANNEL"))
 
 
-def call(method, fields, sleep=None):
-    """One Slack Web API call. Returns Slack's answer, or raises SlackError.
+def call(method, fields, sleep=None, form=False):
+    """One Slack Web API call. Returns Slack's answer, or raises SlackError. form: send the fields
+    form-encoded, as the methods that read (conversations.history) want, rather than as JSON.
 
     Tried three times when the failure may pass: no connection, a timeout, a 5xx, or a 429 (after
     the wait Slack asks for). Slack's own refusals, such as a bad token or a channel the bot isn't
@@ -50,9 +51,12 @@ def call(method, fields, sleep=None):
     arrive twice; better than not at all.
     """
     sleep = sleep or time.sleep
-    headers = {"Authorization": f"Bearer {os.environ['SLACK_BOT_TOKEN']}",
-               "Content-Type": "application/json; charset=utf-8"}
-    payload = json.dumps(fields).encode()
+    headers = {"Authorization": f"Bearer {os.environ['SLACK_BOT_TOKEN']}"}
+    if form:
+        payload = fields
+    else:
+        headers["Content-Type"] = "application/json; charset=utf-8"
+        payload = json.dumps(fields).encode()
     problem = None
     for attempt in range(TRIES):
         wait = WAITS[min(attempt, len(WAITS) - 1)]
@@ -158,6 +162,18 @@ def section(text):
 def sections(text):
     """Text in Slack's markup, escaped already, in as many sections as it needs, cut at line ends."""
     return [section(chunk) for chunk in _chunks(text, SECTION, escaped=True)]
+
+
+def actions(elements):
+    return {"type": "actions", "elements": elements}
+
+
+def button(text, value, style=None):
+    """A button that sends value to the app's Request URL when tapped (the Worker)."""
+    out = {"type": "button", "text": {"type": "plain_text", "text": text}, "value": value, "action_id": value}
+    if style:
+        out["style"] = style
+    return out
 
 
 def divider():

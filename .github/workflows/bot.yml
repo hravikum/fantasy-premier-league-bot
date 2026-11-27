@@ -11,7 +11,7 @@ on:
       job:
         description: Which job (cron-job.org sends tick)
         type: choice
-        options: [dry-run, tick, preview, main, final, check-write, explain]
+        options: [dry-run, tick, preview, main, final, check-write, explain, slack-check]
         default: dry-run
       player:
         description: For explain, the player's name as FPL shows it (e.g. Haaland)
@@ -28,9 +28,9 @@ permissions:
   contents: write     # to save state (encrypted login, schedule, write log) to the bot-state branch
 
 concurrency:
-  # One run at a time: two runs would both try to renew the login. Explain runs don't log in,
-  # so they run alongside (and can't knock a queued tick out of the queue).
-  group: ${{ inputs.job == 'explain' && format('explain-{0}', github.run_id) || 'fpl' }}
+  # One run at a time: two runs would both try to renew the login. Explain and slack-check runs don't
+  # log in, so they run alongside (and can't knock a queued tick out of the queue).
+  group: ${{ (inputs.job == 'explain' || inputs.job == 'slack-check') && format('{0}-{1}', inputs.job, github.run_id) || 'fpl' }}
   cancel-in-progress: false
 
 jobs:
@@ -54,8 +54,14 @@ jobs:
         env:
           PLAYER: ${{ inputs.player }}
           FPL_TEAM_ID: ${{ vars.FPL_TEAM_ID }}
+      - name: Check the Slack buttons (run it, tap Yes or No in Slack, run it again)
+        if: inputs.job == 'slack-check'
+        run: python approvals.py --slack-check
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       - name: Bot
-        if: inputs.job != 'explain'
+        if: inputs.job != 'explain' && inputs.job != 'slack-check'
         run: bash hosted_run.sh --job "${JOB:-dry-run}" ${{ (github.event_name == 'workflow_dispatch' && inputs.job == 'dry-run' && inputs.email) && '--email' || '' }}
         env:
           JOB: ${{ inputs.job }}
