@@ -164,7 +164,13 @@ def blocks_of(post):
     return post["layouts"][0]
 
 
-def test_each_post_has_at_most_one_table_and_the_detail_goes_in_the_thread():
+def texts(blocks):
+    """Each block's text, for comparing: sections and context as they read, a divider as ---."""
+    return [b["text"]["text"] if "text" in b else b["elements"][0]["text"] if b["type"] == "context" else "---"
+            for b in blocks]
+
+
+def test_the_summary_is_in_the_channel_and_the_report_in_one_reply_between_dividers():
     message = doc.Message("GW12 preview", "Deadline Fri 27 Nov 13:30 ET", [("Live: changes are sent", "good")], [
         doc.Callout("Team news", ["Raya: shoulder"], "warn"),
         doc.Heading("At the main run"), doc.Para("Transfers"), doc.Table(["Out", "In"], [["Raya", "Trafford"]]),
@@ -172,14 +178,22 @@ def test_each_post_has_at_most_one_table_and_the_detail_goes_in_the_thread():
         doc.Heading("Plan"), doc.Table(["GW"], [["13"]]), doc.Table(["Chip"], [["BB"]])],
         footer="Run: https://github.com/x/y/actions/runs/1")
     posts = doc.to_slack(message)
-    assert [p["text"] for p in posts] == ["GW12 preview", "Starting XI", "Plan", "GW12 preview"]
-    for post in posts:
-        assert sum(b["type"] == "table" for b in blocks_of(post)) <= 1
-    main = blocks_of(posts[0])
-    assert main[0] == slack.header("GW12 preview")
-    assert "🟢 Live: changes are sent" in main[1]["elements"][0]["text"]
-    assert main[2] == slack.section(":warning: *Team news*\nRaya: shoulder")
-    assert "<https://github.com/x/y/actions/runs/1>" in main[-1]["elements"][0]["text"]
+    assert [p["text"] for p in posts] == ["GW12 preview", "GW12 preview: the full report"]
+    assert all(b["type"] != "table" for p in posts for b in blocks_of(p))
+    assert texts(blocks_of(posts[0])) == [
+        "GW12 preview", "Deadline Fri 27 Nov 13:30 ET\n🟢 Live: changes are sent", "---",
+        ":warning: *Team news*\nRaya: shoulder", "---", "*At the main run*", "Transfers", "*Raya*  Trafford", "---",
+        "🧵 The full report is in the thread · <https://github.com/x/y/actions/runs/1|Run log>"]
+    assert texts(blocks_of(posts[1])) == ["👕  *Starting XI*", "*Saka*", "Bench: x", "---", "🗓️  *Plan*", "*13*", "*BB*"]
+
+
+def test_a_report_too_long_for_one_reply_is_split_between_sections():
+    blocks = [doc.Heading("Changes")]
+    for n in range(30):
+        blocks += [doc.Heading(f"Section {n}"), doc.Para("a"), doc.Para("b")]
+    posts = doc.to_slack(doc.Message("GW12 preview", blocks=blocks))
+    assert len(posts) == 4 and all(len(blocks_of(p)) <= slack.MAX_BLOCKS for p in posts)
+    assert blocks_of(posts[2])[0] == slack.section("*Section 12*")      # 12 sections of 4 blocks a reply
 
 
 def test_an_alert_is_flagged_and_without_headings_is_one_post():
@@ -187,40 +201,39 @@ def test_an_alert_is_flagged_and_without_headings_is_one_post():
         doc.Callout("Action needed", ["FAILED: HTTP 400", doc.Tone("Make the changes yourself.", bold=True)], "bad")],
         alert=True))
     assert len(posts) == 1
-    assert blocks_of(posts[0])[0] == slack.header("🚨 GW12 main run: ACTION NEEDED")
-    assert blocks_of(posts[0])[1] == slack.section(":rotating_light: *Action needed*\nFAILED: HTTP 400\n"
-                                                   "*Make the changes yourself.*")
+    assert texts(blocks_of(posts[0])) == ["🚨 GW12 main run: ACTION NEEDED", "---",
+                                          ":rotating_light: *Action needed*\nFAILED: HTTP 400\n"
+                                          "*Make the changes yourself.*"]
 
 
-def test_badges_buttons_and_muted_text():
+def test_badges_buttons_muted_text_and_bold_spaces():
     posts = doc.to_slack(doc.Message("GW12 preview", blocks=[
         doc.Para(["Saka", doc.Badge("C")]),
         doc.Para([doc.Button("Yes", "mailto:x@gmail.com?subject=FPL%20decision&body=1%20yes", "good", plain="reply")]),
-        doc.Para("None this week.", tone="muted")]))
-    main = blocks_of(posts[0])
-    assert main[1] == slack.section("Saka `C`")
-    assert main[2]["text"]["text"].startswith("<mailto:x@gmail.com?subject=FPL%20decision&amp;body=1%20yes|Yes>")
-    assert main[3] == slack.context("None this week.")
-
-
-def test_bold_keeps_its_spaces_outside_so_slack_shows_it_and_a_leading_badge_has_no_space():
-    posts = doc.to_slack(doc.Message("t", blocks=[
+        doc.Para("None this week.", tone="muted"),
         doc.Para([doc.Tone("Bench: ", bold=True), "Trafford 3.3"]),
         doc.Para([doc.Badge("DO", "good"), "  ", doc.Tone("Transfers", bold=True), ": free"])]))
-    assert blocks_of(posts[0])[1] == slack.section("*Bench:* Trafford 3.3")
-    assert blocks_of(posts[0])[2] == slack.section("`DO`  *Transfers*: free")
+    shown = texts(blocks_of(posts[0]))[2:]
+    assert shown[0] == "Saka `C`"
+    assert shown[1].startswith("<mailto:x@gmail.com?subject=FPL%20decision&amp;body=1%20yes|Yes>")
+    assert blocks_of(posts[0])[4] == slack.context("None this week.")
+    assert shown[3:] == ["*Bench:* Trafford 3.3", "`DO`  *Transfers*: free"]
 
 
-def test_table_cells_mark_colour_with_a_dot_and_badges_in_brackets():
+def test_slack_lines_replace_a_table_or_a_paragraph():
     posts = doc.to_slack(doc.Message("t", blocks=[doc.Heading("Fixtures"), doc.Table(
-        ["Player", "GW12"], [[["Tarkowski", doc.Badge("OUT", "bad")],
-                              [doc.Tone("ARS (H)", "good"), " ", doc.Tone("out", "bad", bold=True)]]], right={1},
-        note="Green: easier.")]))
-    table = blocks_of(posts[0])[-1]
-    assert table["rows"][1] == [{"type": "raw_text", "text": "Tarkowski (OUT)"},
-                                {"type": "raw_text", "text": "🟢 ARS (H) 🔴 out"}]
-    assert table["column_settings"] == [{"align": "left", "is_wrapped": True}, {"align": "right"}]
-    assert blocks_of(posts[0])[-2] == slack.context("Green: easier.")
+        ["Player", "GW12"], [["Tarkowski", "ARS (H) out"]], note="Green: easier.",
+        slack=[[doc.Tone("Tarkowski", bold=True), doc.Badge("OUT", "bad"), f"  {doc.dot('good')} ARS (H) out"]]),
+        doc.Para("starts: A; captain: B -> C", slack=[["• starts: A"], ["• captain: B → C"]])]))
+    # The lines say what the note would, so the note isn't shown.
+    assert texts(blocks_of(posts[0]))[2:5] == ["📅  *Fixtures*", "*Tarkowski* `OUT`  🟢 ARS (H) out",
+                                               "• starts: A\n• captain: B → C"]
+
+
+def test_a_table_without_lines_of_its_own_is_a_line_a_row():
+    posts = doc.to_slack(doc.Message("t", blocks=[doc.Heading("Top projections, GW12-17"), doc.Table(
+        ["Out", "", "In"], [["Rogers £8.2", "→", "B.Fernandes £11.6"], ["GK", "", "Trafford £5.1 (23.3)"]])]))
+    assert texts(blocks_of(posts[0]))[3] == "*Rogers £8.2*  →  B.Fernandes £11.6\n*GK*  Trafford £5.1 (23.3)"
 
 
 def test_a_long_callout_is_split_into_sections_that_fit():

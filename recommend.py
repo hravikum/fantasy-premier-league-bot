@@ -171,7 +171,13 @@ def report(analysis, per_gw, pf, players, fixtures, teams, team, horizon_gws):
                  f"{by_id.loc[i, 'web_name']} £{by_id.loc[i, 'price']:.1f}", by_id.loc[i, "position"],
                  f"{per_gw.loc[o, horizon_gws].sum():.1f} → {per_gw.loc[i, horizon_gws].sum():.1f}"]
                 for o, i in zip(first.transfers_out, first.transfers_in)]
-        blocks.append(doc.Table(["Out", "", "In", "Pos", f"xP, {span}"], rows, right={4}))
+        lines = [["🔁 ", doc.Tone(by_id.loc[o, "web_name"], bold=True), f" £{by_id.loc[o, 'price']:.1f}",
+                  *([doc.Badge(f"out {sold[o]}", "bad")] if o in sold else []), "  →  ",
+                  doc.Tone(by_id.loc[i, "web_name"], bold=True), f" £{by_id.loc[i, 'price']:.1f}",
+                  f"  ·  {by_id.loc[i, 'position']}  ·  {per_gw.loc[o, horizon_gws].sum():.1f} → "
+                  f"{per_gw.loc[i, horizon_gws].sum():.1f} xP, {span}"]
+                 for o, i in zip(first.transfers_out, first.transfers_in)]
+        blocks.append(doc.Table(["Out", "", "In", "Pos", f"xP, {span}"], rows, right={4}, slack=lines))
         for o in [o for o in first.transfers_out if o in sold]:
             news = by_id.loc[o, "news"] or "ruled out by FPL"
             blocks.append(doc.Para([doc.Tone(by_id.loc[o, "web_name"], bold=True),
@@ -201,14 +207,17 @@ def report(analysis, per_gw, pf, players, fixtures, teams, team, horizon_gws):
     blocks += lineup_blocks(first, per_gw, pf, players, teams)
 
     blocks.append(doc.Heading("Plan for the following weeks"))
-    rows = []
+    rows, lines = [], []
     for week in base.weeks[1:]:
         moves = ", ".join(f"{by_id.loc[o, 'web_name']} → {by_id.loc[i, 'web_name']}"
                           for o, i in zip(week.transfers_out, week.transfers_in)) or doc.Tone("no transfers", "muted")
-        rows.append([f"GW{week.gw}", [moves, doc.Badge(f"{week.hits} hit", "warn")] if week.hits else moves,
-                     by_id.loc[week.captain, "web_name"], f"{week.xp:.1f}"])
+        moves = [moves, doc.Badge(f"{week.hits} hit", "warn")] if week.hits else moves
+        rows.append([f"GW{week.gw}", moves, by_id.loc[week.captain, "web_name"], f"{week.xp:.1f}"])
+        lines.append([doc.Tone(f"GW{week.gw}", bold=True), "   ", moves,
+                      f"  ·  captain {by_id.loc[week.captain, 'web_name']}  ·  {week.xp:.1f} xP"])
     blocks.append(doc.Table(["", "Transfers", "Captain", "xP"], rows, right={3},
-                            note="Re-planned every run, so later weeks can change."))
+                            note="Re-planned every run, so later weeks can change.",
+                            slack=lines + [["_Re-planned every run, so later weeks can change._"]]))
     if analysis.chips:
         blocks += chip_planner.describe(analysis.chip_table, analysis.chip_plan, analysis.chip_proposal,
                                         analysis.wildcard_gain,
@@ -270,21 +279,33 @@ def fixture_blocks(plan, per_gw, pf, players, teams, team, weeks=FIXTURE_WEEKS):
     sell_week = {i: w.gw for w in reversed(window) for i in w.transfers_out}
     buy_week = {i: w.gw for w in reversed(window) for i in w.transfers_in}
 
+    lines = []
+
     def row(i, badges):
         cells = [[by_id.loc[i, "web_name"], *badges], by_id.loc[i, "position"]]
+        weeks_line = []                 # Slack: the same, on one line with a dot for each fixture's colour
         for g in gws:
             fx = games[(games.id == i) & (games.gw == g)]
             if fx.empty:
                 cells.append(doc.Tone("no match", "muted"))
+                weeks_line.append("no match")
                 continue
-            parts = []
+            parts, slack_parts = [], []
             for n, f in enumerate(fx.itertuples()):
-                parts += ([", "] if n else []) + [doc.Tone(f"{short[f.opp]} ({'H' if f.home else 'A'})",
-                                                           fixture_tone(f, mu))]
+                opp, tone = f"{short[f.opp]} ({'H' if f.home else 'A'})", fixture_tone(f, mu)
+                parts += ([", "] if n else []) + [doc.Tone(opp, tone)]
+                slack_parts.append(f"{doc.dot(tone)} {opp}")
             out = (fx.avail <= 0).all()
             parts += [" ", doc.Tone("out", "bad", bold=True) if out else f"{per_gw.loc[i, g]:.1f}"]
             cells.append(parts)
+            weeks_line.append(", ".join(slack_parts) + (" out" if out else f" {per_gw.loc[i, g]:.1f}"))
         cells.append(f"{per_gw.loc[i, gws].sum():.1f}")
+        group = by_id.loc[i, "position"] if i in team.squad else "buys"
+        if lines and group != lines[-1][0]:
+            lines.append((group, [""]))                     # a blank line between groups
+        lines.append((group, [doc.Tone(by_id.loc[i, "web_name"], bold=True), *badges,
+                              f" {by_id.loc[i, 'position']}  ", doc.Tone(f"{per_gw.loc[i, gws].sum():.1f}", bold=True),
+                              "  —  ", "  ·  ".join(weeks_line)]))
         return cells
 
     def key(i):
@@ -310,7 +331,10 @@ def fixture_blocks(plan, per_gw, pf, players, teams, team, weeks=FIXTURE_WEEKS):
                       row_tones=tones,
                       note="Opponent in green: an easier fixture than average for him; red: harder (his team's "
                            "attack for midfielders and forwards, the opponent's attack for keepers and defenders). "
-                           "Number: his expected points that week. 'out': ruled out.")]
+                           "Number: his expected points that week. 'out': ruled out.",
+                      slack=[[f"_{doc.dot('good')} easier  {doc.dot(None)} average  {doc.dot('bad')} harder fixture. "
+                              f"Bold: expected points over {span}, then each week's._"], [""],
+                             *[line for _, line in lines]])]
 
 
 def lineup_blocks(week, per_gw, pf, players, teams, chip=None):
@@ -318,19 +342,27 @@ def lineup_blocks(week, per_gw, pf, players, teams, chip=None):
     by_id = players.set_index("id")
     short = teams.set_index("id")["short_name"]
     order = {"GK": 0, "DEF": 1, "MID": 2, "FWD": 3}
-    rows, tones = [], {}
+    rows, tones, by_position, flagged = [], {}, {}, []
     for n, i in enumerate(sorted(week.xi, key=lambda i: (order[by_id.loc[i, "position"]], -per_gw.loc[i, week.gw]))):
         fx = pf[(pf.id == i) & (pf.gw == week.gw)]
         opp = ", ".join(f"{short[o]} ({'H' if h else 'A'})" for o, h in zip(fx.opp, fx.home)) or "no match"
         badge = [doc.Badge("TC" if chip == "3xc" else "C")] if i == week.captain else \
             [doc.Badge("VC", "muted")] if i == week.vice_captain else []
         name = [by_id.loc[i, "web_name"], *badge]
+        # Slack: a player a line, "`MID`  Saka `C`  7.2  ARS (H)"; flagged players' news under the XI.
+        player = [doc.Badge(by_id.loc[i, "position"]), " ", doc.Tone(by_id.loc[i, "web_name"], bold=True), *badge,
+                  f"  {per_gw.loc[i, week.gw]:.1f}  ", f"_{opp}_"]
         if by_id.loc[i, "status"] != "a":
-            name += [" ", doc.Tone(by_id.loc[i, "news"] or by_id.loc[i, "status"], "warn")]
+            news = by_id.loc[i, "news"] or by_id.loc[i, "status"]
+            name += [" ", doc.Tone(news, "warn")]
             tones[n] = "warn"
+            player.insert(-1, f"{doc.DOTS['warn']}  ")
+            flagged.append([f"{doc.DOTS['warn']} ", doc.Tone(by_id.loc[i, "web_name"], bold=True), f": {news}"])
         rows.append([name, by_id.loc[i, "position"], opp, f"{per_gw.loc[i, week.gw]:.1f}"])
+        by_position.setdefault(by_id.loc[i, "position"], []).append(player)
+    lines = [p for players in by_position.values() for p in players] + ([[""]] + flagged if flagged else [])
     bench = " · ".join(f"{by_id.loc[i, 'web_name']} {per_gw.loc[i, week.gw]:.1f}" for i in week.bench)
-    return [doc.Table(["Player", "Pos", "Opponent", "xP"], rows, right={3}, row_tones=tones),
+    return [doc.Table(["Player", "Pos", "Opponent", "xP"], rows, right={3}, row_tones=tones, slack=lines),
             doc.Para([doc.Tone("Bench" + (" (Bench Boost: they count)" if chip == "bboost" else "") + ": ", bold=True),
                       bench])]
 

@@ -6,6 +6,7 @@ coloured box), Table and Bullets. Table cells and text can hold Badge (a small l
 captain) or Tone (coloured text). HTML uses inline styles and tables, which every mail app shows.
 """
 import html as html_lib
+import re
 from dataclasses import dataclass, field, replace
 
 import slack
@@ -47,6 +48,7 @@ class Heading:
 class Para:
     text: object                   # str, Tone, Badge or a list of them
     tone: str | None = None
+    slack: list | None = None      # lines (each like text) Slack shows instead
 
 
 @dataclass
@@ -68,6 +70,7 @@ class Table:
     right: set = field(default_factory=set)        # column numbers to right-align (numbers)
     row_tones: dict = field(default_factory=dict)  # row number -> tone, for a tinted row
     note: str = ""
+    slack: list | None = None      # lines (each like Para text) Slack shows instead of the grid
 
 
 @dataclass
@@ -202,7 +205,14 @@ def to_html(message):
 # ---------------------------------------------------------------- Slack
 
 MARKS = {"good": ":white_check_mark:", "bad": ":rotating_light:", "warn": ":warning:", "info": ":information_source:"}
-DOTS = {"good": "🟢", "bad": "🔴", "warn": "⚠️", "info": "🔵"}    # where Slack can't colour: pills, table cells
+DOTS = {"good": "🟢", "bad": "🔴", "warn": "⚠️", "info": "🔵"}    # where Slack can't colour
+ICONS = (("Transfers", "🔁"), ("Fixtures", "📅"), ("Starting XI", "👕"), ("Lineup", "👕"), ("Plan", "🗓️"),
+         ("Chips", "🎟️"), ("Top projections", "📈"))
+
+
+def dot(tone):
+    """A fixture's colour as Slack shows it: 🟢 easier, 🔴 harder, ⚪ average."""
+    return {"good": "🟢", "bad": "🔴"}.get(tone, "⚪")
 
 
 def _md(part):
@@ -224,23 +234,26 @@ def _md(part):
     return slack.LINK.sub(lambda m: f"<{m.group(0)}>", text)
 
 
-def _cell(part):
-    """A table cell's text: Slack's tables take no markup, so a coloured word gets a dot."""
-    if isinstance(part, list):
-        return "".join(_cell(p) for p in part)
-    if isinstance(part, Badge):
-        return f" ({part.text})"
-    if isinstance(part, Button):
-        return part.plain
-    if isinstance(part, Tone):
-        return f"{DOTS[part.tone]} {part.text}" if part.tone in DOTS else part.text
-    return "" if part is None else str(part)
+def _lines(lines):
+    return slack.sections("\n".join(_md(line).strip() for line in lines))
+
+
+def _row_line(row):
+    """A table row on one line, for tables without lines of their own: the first cell in bold, the
+    rest after it, an arrow cell kept as an arrow."""
+    first, *rest = [_md(cell).strip() for cell in row]
+    head = f"*{first}*" if first else ""
+    line = "  ·  ".join(c for c in [head, *rest] if c).replace("  ·  →  ·  ", "  →  ")
+    return head + line[len(head):].replace("  ·  ", "  ", 1) if head and line.startswith(head + "  ·  ") else line
 
 
 def _slack_block(block):
     if isinstance(block, Heading):
-        return [slack.section(f"*{slack.escape(block.text)}*")]
+        icon = next((i for word, i in ICONS if block.text.startswith(word)), "")
+        return [slack.section(f"{icon}  *{slack.escape(block.text)}*" if icon else f"*{slack.escape(block.text)}*")]
     if isinstance(block, Para):
+        if block.slack is not None:
+            return _lines(block.slack)
         text = _md(block.text).strip()
         return [slack.context(text)] if block.tone == "muted" and len(text) <= slack.SECTION else slack.sections(text)
     if isinstance(block, Callout):
@@ -249,9 +262,10 @@ def _slack_block(block):
     if isinstance(block, Bullets):
         return slack.sections("\n".join("• " + _md(item).strip() for item in block.items))
     if isinstance(block, Table):
-        rows = [[_cell(c).strip() for c in block.headers]] + [[_cell(c).strip() for c in row] for row in block.rows]
-        # Slack shows the table at the bottom of its message, so the note goes above it.
-        return ([slack.context(slack.escape(block.note))] if block.note else []) + [slack.table(rows, block.right)]
+        if block.slack is not None:          # lines of its own say what the note would
+            return _lines(block.slack)
+        note = [slack.context(slack.escape(block.note))] if block.note else []
+        return note + slack.sections("\n".join(_row_line(row) for row in block.rows))
     raise TypeError(block)
 
 
@@ -265,40 +279,51 @@ def to_slack(message):
     and the rest replies in its thread. "text" is what a notification shows; "layouts" are tried in
     turn (slack.post_first): the laid-out version, then the plain text in monospace.
 
-    Slack shows one table a message, at its bottom, so the blocks are cut into parts at each heading
-    and before any second table. The message in the channel holds what comes before the first heading
-    (warnings, decisions, team news) and the first heading's part (what the bot changes); the rest,
-    the report, goes in the thread.
+    The message in the channel holds what comes before the first heading (warnings, decisions, team
+    news) and the first heading's section (what the bot changes). The rest, the report, goes in one
+    reply in its thread, its sections between dividers (more replies only if it won't fit in one).
+    Tables become lines, which read better on a phone than Slack's narrow tables.
     """
     parts, current = [], []
     for block in message.blocks:
-        new_table = isinstance(block, Table) and any(isinstance(b, Table) for b in current)
-        if current and (isinstance(block, Heading) or new_table):
+        if current and isinstance(block, Heading):
             parts.append(current)
             current = []
         current.append(block)
     if current:
         parts.append(current)
-    if len(parts) > 1 and not isinstance(parts[0][0], Heading) and not any(isinstance(b, Table) for b in parts[0]):
-        parts[:2] = [parts[0] + parts[1]]
-    parts = parts or [[]]
+    main, report = (parts[0] if parts else []), parts[1:]
+    if report and not isinstance(main[0], Heading):
+        main, report = main + report[0], report[1:]
 
     title = ("🚨 " if message.alert else "") + message.title
     pills = " · ".join(f"{DOTS[tone]} {text}" if tone in DOTS else text for text, tone in message.pills)
     top = [slack.header(title)]
     if message.subtitle or pills:
         top.append(slack.context("\n".join(slack.escape(t) for t in (message.subtitle, pills) if t)))
-    bottom = [slack.context(_md(message.footer))] if message.footer else []
-    posts = []
-    for n, part in enumerate(parts):
-        blocks = [b for block in part for b in _slack_block(block)]
-        if n == 0:
-            laid_out = _fit(top + blocks + bottom, slack.MAX_BLOCKS - 1)       # room for an @-mention
-            plain = [slack.header(title)] + slack.monospace(to_text(replace(message, blocks=part)), slack.MAX_BLOCKS - 2)
-            text = message.title
-        else:
-            laid_out = _fit(blocks)
-            text = part[0].text if isinstance(part[0], Heading) else message.title
-            plain = slack.monospace(to_text(Message("", blocks=part)))
-        posts.append({"text": text, "layouts": [laid_out, plain]})
+    body = []
+    for block in main:
+        if isinstance(block, Heading) and body:
+            body.append(slack.divider())
+        body += _slack_block(block)
+    footer = re.sub(r"Run: <([^>|]+)>", r"<\1|Run log>", _md(message.footer)) if message.footer else ""
+    end = " · ".join(t for t in ("🧵 The full report is in the thread" if report else "", footer) if t)
+    laid_out = _fit(top + [slack.divider()] + body + ([slack.divider(), slack.context(end)] if end else []),
+                    slack.MAX_BLOCKS - 1)                                  # room for an @-mention
+    plain = [slack.header(title)] + slack.monospace(to_text(replace(message, blocks=main)), slack.MAX_BLOCKS - 2)
+    posts = [{"text": message.title, "layouts": [laid_out, plain]}]
+
+    replies, blocks, text = [], [], []
+    for part in report:
+        rendered = [b for block in part for b in _slack_block(block)]
+        if blocks and len(blocks) + 1 + len(rendered) > slack.MAX_BLOCKS:
+            replies.append((blocks, text))
+            blocks, text = [], []
+        blocks += ([slack.divider()] if blocks else []) + rendered
+        text += part
+    if blocks:
+        replies.append((blocks, text))
+    for blocks, part in replies:
+        posts.append({"text": f"{message.title}: the full report",
+                      "layouts": [_fit(blocks), slack.monospace(to_text(Message("", blocks=part)))]})
     return posts

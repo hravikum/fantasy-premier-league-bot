@@ -138,8 +138,9 @@ steps; the new secret takes over on the next run.
 **Slack.** With the secrets `SLACK_BOT_TOKEN` and `SLACK_CHANNEL` set, every message goes to a Slack
 channel instead of email (`mailer.py`, `slack.py`, `doc.to_slack`):
 - The message in the channel has the warnings, your decisions and what the bot changes; the
-  report (transfers, fixtures, XI, plan, chips, top projections) goes in its thread, a table a reply.
-- Fixture colours become 🟢 (easier) and 🔴 (harder), as Slack's tables can't colour text.
+  report (transfers, fixtures, XI, plan, chips, top projections) goes in one reply in its thread.
+- Tables become lines that read on a phone, and fixture colours become 🟢 easier, ⚪ average and
+  🔴 harder, as Slack can't colour text.
 - **ACTION NEEDED** messages and failure alerts always go by email too, and @-mention you in Slack
   when the variable `SLACK_USER_ID` is set.
 - If a Slack post fails, that message is emailed instead. If Slack refuses a layout, the message is
@@ -177,7 +178,7 @@ the email. To go back to email only, delete the two Slack secrets.
 ```
 python3 recommend.py --team 1234567        # the report from public data
 python3 explain.py Haaland --team 1234567  # why the model rates a player as it does, and his value to your team
-python3 -m pytest -q                       # 72 tests, including preview → main → final against a fake FPL
+python3 -m pytest -q                       # 73 tests, including preview → main → final against a fake FPL
 python3 backtest.py                        # projections vs. past gameweeks
 ```
 

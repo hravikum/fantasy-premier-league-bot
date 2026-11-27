@@ -160,6 +160,10 @@ def sections(text):
     return [section(chunk) for chunk in _chunks(text, SECTION, escaped=True)]
 
 
+def divider():
+    return {"type": "divider"}
+
+
 def context(text):
     """Small grey text, escaped already."""
     return {"type": "context", "elements": [{"type": "mrkdwn", "text": text}]}

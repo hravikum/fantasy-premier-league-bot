@@ -199,12 +199,22 @@ def describe(actions, players, heading="What the bot would change on FPL"):
             label, tone = "FAILED", "bad"
         kind = "Transfers" if action.kind == "transfers" else "Lineup and captain"
         line = [doc.Badge(label, tone), "  ", doc.Tone(kind, bold=True), f": {action.why}"]
-        if action.outcome and action.outcome not in ("sent", "shadow"):
+        failed = action.outcome and action.outcome not in ("sent", "shadow")
+        if failed:
             line += [" ", doc.Tone(action.outcome, "bad")]
-        blocks.append(doc.Para(line))
+        # Slack: each reason on its own line, as one long line is hard to read on a phone.
+        reasons = action.why.replace(" -> ", " → ").split("; ")
+        lines = [line[:3] + ([f": {reasons[0]}"] if len(reasons) == 1 else [])]
+        lines += [["• ", reason] for reason in reasons if len(reasons) > 1]
+        lines += [[f"{doc.DOTS['bad']} ", doc.Tone(action.outcome, bold=True)]] if failed else []
+        blocks.append(doc.Para(line, slack=lines))
         if action.kind == "transfers" and action.payload["transfers"]:
+            moves = action.payload["transfers"]
             blocks.append(doc.Table(["Out", "Sell", "In", "Buy"], [
                 [name[t["element_out"]], f"£{t['selling_price'] / 10:.1f}", name[t["element_in"]],
-                 f"£{t['purchase_price'] / 10:.1f}"] for t in action.payload["transfers"]], right={1, 3},
-                note=f"Chip: {action.payload['chip']}" if action.payload.get("chip") else ""))
+                 f"£{t['purchase_price'] / 10:.1f}"] for t in moves], right={1, 3},
+                note=f"Chip: {action.payload['chip']}" if action.payload.get("chip") else "",
+                slack=[["🔁 ", doc.Tone(name[t["element_out"]], bold=True), f" £{t['selling_price'] / 10:.1f}  →  ",
+                        doc.Tone(name[t["element_in"]], bold=True), f" £{t['purchase_price'] / 10:.1f}"]
+                       for t in moves]))
     return blocks

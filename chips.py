@@ -98,9 +98,18 @@ def describe(table, plan, proposal, wild=float("nan"), left=""):
                 cells.append([doc.Tone(text, "good", bold=True), doc.Badge("plan", "good")] if plan.get(c) == gw
                              else doc.Tone(text, bold=True) if best[c] == gw else text)
             rows.append(cells)
+        first = table.index[0]
+        lines = []                  # Slack: a line a chip, its value now and the week the plan uses it
+        for c in chips:
+            line = [doc.Tone(NAMES[c], bold=True), f"   GW{first} {table.loc[first, c]:+.1f}"]
+            if c in plan:
+                line += ["  ·  ", doc.Tone(f"plan: GW{plan[c]} {table.loc[plan[c], c]:+.1f}", bold=True)]
+            elif best[c] != first:
+                line.append(f"  ·  best: GW{best[c]} {table.loc[best[c], c]:+.1f}")
+            lines.append(line)
         blocks.append(doc.Table(["", *[NAMES[c] for c in chips]], rows, right=set(range(1, len(chips) + 1)),
                                 note="Extra expected points if played that week. 'plan' marks the best spread, "
-                                     "one chip a week, before they expire."))
+                                     "one chip a week, before they expire.", slack=lines))
     if wild == wild:
         blocks.append(doc.Para(f"Wildcard now: {wild:+.1f} expected points over the horizon vs. the plan."))
     blocks.append(doc.Para([doc.Tone("Proposed this week: ", bold=True), NAMES[proposal]] if proposal
