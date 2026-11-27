@@ -1,35 +1,27 @@
 {
   "gw": 12,
-  "checked_at": "2026-11-26T23:49:12Z",
+  "checked_at": "2026-11-27T05:46:52Z",
   "players": [
-    {
-      "id": 1,
-      "name": "Raya",
-      "start_chance": 0.4,
-      "reason": "Still no return to training reported for his shoulder; Arteta's last word (after the Dortmund game) was that they first need to know how bad it is and that Kepa will play v City if needed, and RotoWire projects Kepa in goal for Sunday.",
-      "source": "https://www.sportsmole.co.uk/football/arsenal/injury-news/news/mikel-arteta-drops-fresh-david-raya-injury-update-ahead-of-arsenal-vs-man-city-clash_609800.html"
-    },
     {
       "id": 31,
       "name": "Konsa",
       "start_chance": 0.75,
-      "reason": "Projected to start beside Gabriel v Man City, but Saliba is now back from his back injury and is an option at centre-back, so Konsa's place is less certain than his flag suggests.",
-      "source": "https://www.rotowire.com/soccer/article/arsenal-vs-manchester-city-prediction-predicted-lineups-team-news-148253"
+      "reason": "Both main predicted XIs still have him beside Gabriel v Man City and the Standard says Saliba coming straight back in would be a surprise, but Saliba has returned to the matchday squad and Fantasy Football Pundit only gives Konsa about a 60% start, with Arteta's Friday press conference still to come.",
+      "source": "https://uk.sports.yahoo.com/news/arsenal-xi-vs-man-city-150612837.html"
     }
   ],
   "teams_checked": [
-    "Spurs",
-    "Brighton",
-    "Everton",
     "Arsenal",
-    "Bournemouth",
+    "Man City",
     "Liverpool",
-    "Sunderland",
     "Chelsea",
-    "Aston Villa",
+    "Sunderland",
+    "Spurs",
     "Leeds",
     "Coventry City",
-    "Man City"
+    "Aston Villa",
+    "Bournemouth",
+    "Brighton"
   ],
-  "notes": "Thursday-night run, still before Arteta's Friday press conference, so Raya's status may change; recheck tomorrow. Thursday European games: Brighton 4-0 Craiova with Vuskovic only on as a 62' sub (rested, predicted to start v Newcastle; the 'very swollen' injury was O'Riley's ankle); Bournemouth won 2-1 at Celta with Tavernier on at 68' (assisted winner) and Evanilson unused, both predicted to start at Fulham; Sunderland 1-1 Jagiellonia with Le Fée 65 mins and Hume 45 mins (tactical half-time change, no knock reported), Alderete went off injured. Forest v Chelsea is Friday 20:00: Alonso's presser gave no concern for Rogers, who is in predicted XIs. Leeds (Farke: everyone available) and Coventry (Awoniyi out) have no news on Trafford, Justin or Rudoni. N.Jackson predicted to start at Ipswich; Villa lost at Galatasaray Tuesday. Wirtz, Isak, Barcola in Liverpool predicted XIs for the derby (a liverpool.com piece on Barcola's yellow-card ban risk could not be read). Haaland projected to start at Arsenal with no fitness concern; an AI-generated 'Haaland returns from injury' article was ignored as unreliable. Kinsky predicted in goal at Sunderland. Tarkowski's suspension is already in FPL."
+  "notes": "Early Friday run: Arteta's press conference (Fri afternoon) and other Friday pressers for Sunday games had not happened yet, so Konsa/Saliba could still change. Raya is no longer on the watchlist and was dropped from this file. No new fitness news since Thursday for anyone else: Rogers in predicted XIs for Forest v Chelsea tonight; Trafford, Justin (Rodon fit again but Farke expected to keep the same back three) and Rudoni in predicted XIs for Leeds v Coventry; N.Jackson predicted to start at Ipswich; Wirtz, Isak, Barcola in Liverpool predicted XIs; Calafiori expected back after being rested midweek; Haaland predicted to start; Kinsky predicted in goal at Sunderland; Le Fee and Hume in Sunderland predicted XI. Bournemouth: Rose reported no new injuries; a FotMob 'Tavernier suffers another hamstring injury' headline is an old article from a previous season and was ignored. Fantasy Football Scout tags Tavernier with a suspension flag (likely yellow-card risk), not a ban for this match. Brighton: no new Vuskovic news found; a Soccerway Hurzeler piece found was from an earlier season. Some pages (Yorkshire Evening Post Farke presser, thisisanfield, Sunderland Echo, Sussex Express) could not be read."
 }
