@@ -279,16 +279,16 @@ def fixture_blocks(plan, per_gw, pf, players, teams, team, weeks=FIXTURE_WEEKS):
     sell_week = {i: w.gw for w in reversed(window) for i in w.transfers_out}
     buy_week = {i: w.gw for w in reversed(window) for i in w.transfers_in}
 
-    lines = []
+    slack_rows = [["Player", "Pos", *[f"GW{g}" for g in gws], "xP"]]
 
     def row(i, badges):
         cells = [[by_id.loc[i, "web_name"], *badges], by_id.loc[i, "position"]]
-        weeks_line = []                 # Slack: the same, on one line with a dot for each fixture's colour
+        slack_row = [doc.text_of(cells[0]), by_id.loc[i, "position"]]   # Slack: a dot for each fixture's colour
         for g in gws:
             fx = games[(games.id == i) & (games.gw == g)]
             if fx.empty:
                 cells.append(doc.Tone("no match", "muted"))
-                weeks_line.append("no match")
+                slack_row.append("no match")
                 continue
             parts, slack_parts = [], []
             for n, f in enumerate(fx.itertuples()):
@@ -298,14 +298,9 @@ def fixture_blocks(plan, per_gw, pf, players, teams, team, weeks=FIXTURE_WEEKS):
             out = (fx.avail <= 0).all()
             parts += [" ", doc.Tone("out", "bad", bold=True) if out else f"{per_gw.loc[i, g]:.1f}"]
             cells.append(parts)
-            weeks_line.append(", ".join(slack_parts) + (" out" if out else f" {per_gw.loc[i, g]:.1f}"))
+            slack_row.append(", ".join(slack_parts) + (" out" if out else f" {per_gw.loc[i, g]:.1f}"))
         cells.append(f"{per_gw.loc[i, gws].sum():.1f}")
-        group = by_id.loc[i, "position"] if i in team.squad else "buys"
-        if lines and group != lines[-1][0]:
-            lines.append((group, [""]))                     # a blank line between groups
-        lines.append((group, [doc.Tone(by_id.loc[i, "web_name"], bold=True), *badges,
-                              f" {by_id.loc[i, 'position']}  ", doc.Tone(f"{per_gw.loc[i, gws].sum():.1f}", bold=True),
-                              "  —  ", "  ·  ".join(weeks_line)]))
+        slack_rows.append(slack_row + [cells[-1]])
         return cells
 
     def key(i):
@@ -333,8 +328,8 @@ def fixture_blocks(plan, per_gw, pf, players, teams, team, weeks=FIXTURE_WEEKS):
                            "attack for midfielders and forwards, the opponent's attack for keepers and defenders). "
                            "Number: his expected points that week. 'out': ruled out.",
                       slack=[[f"_{doc.dot('good')} easier  {doc.dot(None)} average  {doc.dot('bad')} harder fixture. "
-                              f"Bold: expected points over {span}, then each week's._"], [""],
-                             *[line for _, line in lines]])]
+                              "The number after each: his expected points that week; xP: the 3 weeks'._"]],
+                      slack_rows=slack_rows)]
 
 
 def lineup_blocks(week, per_gw, pf, players, teams, chip=None):
@@ -370,13 +365,15 @@ def lineup_blocks(week, per_gw, pf, players, teams, chip=None):
 def top_projections(per_gw, players, count=6):
     by_id = players.set_index("id")
     total = per_gw.sum(axis=1)
-    rows = []
+    rows, slack_rows = [], [["Pos", "Player", "Price", "xP"]]
     for pos in ["GK", "DEF", "MID", "FWD"]:
         best = total.reindex(players[players.position == pos].id).nlargest(count)
         rows.append([pos, " · ".join(f"{by_id.loc[i, 'web_name']} £{by_id.loc[i, 'price']:.1f} ({v:.1f})"
                                     for i, v in best.items())])
+        slack_rows += [[pos, by_id.loc[i, "web_name"], f"£{by_id.loc[i, 'price']:.1f}", f"{v:.1f}"]
+                       for i, v in best.items()]
     return [doc.Heading(f"Top projections, GW{per_gw.columns[0]}-{per_gw.columns[-1]}"),
-            doc.Table(["", "Expected points over the horizon"], rows)]
+            doc.Table(["", "Expected points over the horizon"], rows, slack_rows=slack_rows)]
 
 
 def money(team):

@@ -236,6 +236,24 @@ def test_a_table_without_lines_of_its_own_is_a_line_a_row():
     assert texts(blocks_of(posts[0]))[3] == "*Rogers £8.2*  →  B.Fernandes £11.6\n*GK*  Trafford £5.1 (23.3)"
 
 
+def test_a_real_table_ends_its_reply_and_the_next_section_starts_a_new_one():
+    fixtures = doc.Table(["Player", "GW12", "xP"], [["Raya", "NFO (A) 3.6", "10.9"]], note="long note",
+                         slack=[["_🟢 easier_"]], slack_rows=[["Player", "GW12", "xP"], ["Raya", "🟢 NFO (A) 3.6", "10.9"]])
+    top = doc.Table(["", "Expected points"], [["GK", "Raya £6.2 (22.0)"]],
+                    slack_rows=[["Pos", "Player", "Price", "xP"], ["GK", "Raya", "£6.2", "22.0"]])
+    posts = doc.to_slack(doc.Message("GW12 preview", blocks=[
+        doc.Heading("Changes"), doc.Para("x"),
+        doc.Heading("Transfers"), doc.Para("t"), doc.Heading("Fixtures"), fixtures,
+        doc.Heading("Starting XI"), doc.Para("xi"), doc.Heading("Top projections"), top]))
+    assert len(posts) == 3
+    first, second = blocks_of(posts[1]), blocks_of(posts[2])
+    assert texts(first[:-1]) == ["🔁  *Transfers*", "t", "---", "📅  *Fixtures*", "_🟢 easier_"]
+    assert first[-1]["type"] == "table" and first[-1]["rows"][1][1]["text"] == "🟢 NFO (A) 3.6"
+    assert [c["align"] for c in first[-1]["column_settings"]] == ["left", "left", "right"]
+    assert texts(second[:-1]) == ["👕  *Starting XI*", "xi", "---", "📈  *Top projections*"]
+    assert [c["align"] for c in second[-1]["column_settings"]] == ["left", "left", "right", "right"]
+
+
 def test_a_long_callout_is_split_into_sections_that_fit():
     lines = [f"line {n} " + "x" * 90 for n in range(100)]
     blocks = blocks_of(doc.to_slack(doc.Message("t", blocks=[doc.Callout("Where it failed", lines)]))[0])

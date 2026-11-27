@@ -172,10 +172,9 @@ def context(text):
 def table(rows, right=()):
     """A table, its first row the header. Slack takes one a message, of up to 20 columns and 100 rows,
     and shows it at the bottom of the message; right lists the columns (from 0) to align right, as
-    numbers read best, and the others wrap rather than cut long text. An empty cell shows a dash."""
+    numbers read best. An empty cell shows a dash."""
     return {"type": "table",
-            "column_settings": [{"align": "right"} if number in right else {"align": "left", "is_wrapped": True}
-                                for number in range(len(rows[0]))],
+            "column_settings": [{"align": "right" if number in right else "left"} for number in range(len(rows[0]))],
             "rows": [[{"type": "raw_text", "text": str(cell) or "-"} for cell in row] for row in rows[:MAX_ROWS]]}
 
 

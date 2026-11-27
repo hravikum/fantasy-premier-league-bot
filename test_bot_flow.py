@@ -229,10 +229,13 @@ def test_suspended_player_goes_with_a_free_transfer_and_fixtures_show(fpl):
     assert f"FIXTURES, GW{GW}–{GW + 2}" in text and f"{name}(OUT)" in text
     assert f"GW{GW}–{GW + 1}, so he goes now" in text or f"{name} goes now" in text
     assert "Badge" not in html and ">OUT<" in html
-    lines = [line for post in within_slack_limits(server.slack[-1][0]) for b in post["layouts"][0]
+    posts = within_slack_limits(server.slack[-1][0])
+    lines = [line for post in posts for b in post["layouts"][0]
              if b["type"] == "section" for line in b["text"]["text"].split("\n")]
-    assert any(line.startswith(f"*{name}* `OUT`") and " out" in line for line in lines)   # fixtures
     assert any(line.startswith(f"🔁 *{name}*") for line in lines)                          # transfers
+    fixtures = next(row for post in posts for b in post["layouts"][0] if b["type"] == "table"
+                    for row in b["rows"] if row[0]["text"] == f"{name} (OUT)")
+    assert fixtures[2]["text"].endswith(" out")                                             # ruled out that week
 
     assert bot.tick(deadline - pd.Timedelta(hours=2), live=True) == "main"
     sent = [p for path, p in server.posts if path == "transfers/"]

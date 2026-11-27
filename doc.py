@@ -71,6 +71,7 @@ class Table:
     row_tones: dict = field(default_factory=dict)  # row number -> tone, for a tinted row
     note: str = ""
     slack: list | None = None      # lines (each like Para text) Slack shows instead of the grid
+    slack_rows: list | None = None  # or rows of text, header first, Slack shows as a table under those lines
 
 
 @dataclass
@@ -206,8 +207,16 @@ def to_html(message):
 
 MARKS = {"good": ":white_check_mark:", "bad": ":rotating_light:", "warn": ":warning:", "info": ":information_source:"}
 DOTS = {"good": "🟢", "bad": "🔴", "warn": "⚠️", "info": "🔵"}    # where Slack can't colour
+NUMBER = re.compile(r"^[£+-]?\d+(\.\d+)?$")         # a table column of these is aligned right
 ICONS = (("Transfers", "🔁"), ("Fixtures", "📅"), ("Starting XI", "👕"), ("Lineup", "👕"), ("Plan", "🗓️"),
          ("Chips", "🎟️"), ("Top projections", "📈"))
+
+
+def text_of(part):
+    """A part as plain text, a badge after a space in brackets: "Rogers (OUT)"."""
+    if isinstance(part, list):
+        return "".join(text_of(p) for p in part)
+    return f" ({part.text})" if isinstance(part, Badge) else _text(part)
 
 
 def dot(tone):
@@ -262,6 +271,12 @@ def _slack_block(block):
     if isinstance(block, Bullets):
         return slack.sections("\n".join("• " + _md(item).strip() for item in block.items))
     if isinstance(block, Table):
+        if block.slack_rows is not None:     # a real table, which Slack shows at the bottom of its message
+            numbers = {n for n in range(len(block.slack_rows[0]))
+                       if all(NUMBER.match(str(row[n])) for row in block.slack_rows[1:])}
+            above = _lines(block.slack) if block.slack is not None else \
+                [slack.context(slack.escape(block.note))] if block.note else []
+            return above + [slack.table(block.slack_rows, right=numbers)]
         if block.slack is not None:          # lines of its own say what the note would
             return _lines(block.slack)
         note = [slack.context(slack.escape(block.note))] if block.note else []
@@ -280,9 +295,10 @@ def to_slack(message):
     turn (slack.post_first): the laid-out version, then the plain text in monospace.
 
     The message in the channel holds what comes before the first heading (warnings, decisions, team
-    news) and the first heading's section (what the bot changes). The rest, the report, goes in one
-    reply in its thread, its sections between dividers (more replies only if it won't fit in one).
-    Tables become lines, which read better on a phone than Slack's narrow tables.
+    news) and the first heading's section (what the bot changes). The rest, the report, goes in its
+    thread, its sections between dividers. Tables become lines (Table.slack), except those with
+    slack_rows: Slack takes one table a message and shows it at the bottom, so a reply ends with the
+    section that has the table, and the next section starts a new reply. More replies too past 50 blocks.
     """
     parts, current = [], []
     for block in message.blocks:
@@ -321,6 +337,9 @@ def to_slack(message):
             blocks, text = [], []
         blocks += ([slack.divider()] if blocks else []) + rendered
         text += part
+        if any(b["type"] == "table" for b in rendered):        # the table is this reply's end
+            replies.append((blocks, text))
+            blocks, text = [], []
     if blocks:
         replies.append((blocks, text))
     for blocks, part in replies:
