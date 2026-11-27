@@ -141,6 +141,14 @@ def test_a_layout_slack_refuses_is_posted_plain_instead(fake_slack, inbox):
     assert sent[1]["body"]["blocks"] == posts[0]["layouts"][1] and inbox == []
 
 
+def test_a_bot_not_in_the_channel_is_not_tried_plainer_and_the_message_is_emailed(fake_slack, inbox):
+    sent, answer = fake_slack
+    answer(Reply(body={"ok": False, "error": "not_in_channel"}))
+    posts = doc.to_slack(doc.Message("GW12 preview", blocks=[doc.Para("hello")]))
+    assert mailer.send("GW12 preview", "hello", slack_posts=posts)
+    assert len(sent) == 1 and inbox == ["GW12 preview"]
+
+
 def test_the_report_goes_in_the_thread_and_a_lost_reply_still_counts(fake_slack, inbox):
     sent, answer = fake_slack
     message = doc.Message("GW12 preview", blocks=[doc.Heading("Changes"), doc.Para("x"), doc.Heading("Fixtures"),

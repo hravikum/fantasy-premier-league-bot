@@ -177,7 +177,7 @@ the email. To go back to email only, delete the two Slack secrets.
 ```
 python3 recommend.py --team 1234567        # the report from public data
 python3 explain.py Haaland --team 1234567  # why the model rates a player as it does, and his value to your team
-python3 -m pytest -q                       # 71 tests, including preview → main → final against a fake FPL
+python3 -m pytest -q                       # 72 tests, including preview → main → final against a fake FPL
 python3 backtest.py                        # projections vs. past gameweeks
 ```
 

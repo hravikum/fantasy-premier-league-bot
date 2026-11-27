@@ -24,6 +24,7 @@ MAX_BLOCKS = 50        # blocks one message may hold
 MAX_ROWS = 100         # rows one table may hold (one table a message)
 FENCE = "```"
 LINK = re.compile(r"https?://[^\s<>|]+")
+LAYOUT_ERRORS = {"invalid_blocks", "invalid_blocks_format", "msg_too_long"}   # worth a plainer try
 CUT_SHORT = "Cut short: too long for one Slack message. The run's log has all of it."
 
 
@@ -101,14 +102,14 @@ def post_first(text, layouts, thread_ts=None):
     """Post the first of these layouts that Slack takes, and return its ts.
 
     A layout Slack refuses (invalid_blocks: a section over its length limit, say) falls back to the
-    next one, so a mistake in the formatting costs the formatting, never the message. A failure to
-    reach Slack at all is raised at once: a plainer layout wouldn't get through either.
+    next one, so a mistake in the formatting costs the formatting, never the message. Anything else
+    (no answer, a bad token, not_in_channel) is raised at once: a plainer layout wouldn't get through either.
     """
     for number, blocks in enumerate(layouts, 1):
         try:
             return post(text, blocks, thread_ts)
         except SlackError as error:
-            if not error.refused or number == len(layouts):
+            if not (error.refused and str(error).split(": ", 1)[-1] in LAYOUT_ERRORS) or number == len(layouts):
                 raise
             print(f"(Slack refused the layout ({error}); posting it plainer)")
 
