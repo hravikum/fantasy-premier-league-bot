@@ -41,6 +41,14 @@ class Tone:
 
 
 @dataclass
+class Select:
+    """Slack only: a menu whose choice is sent like a button's (worker.js). Emails don't show it."""
+    placeholder: str
+    options: list                  # (label, what it sends)
+    initial: str = ""              # what the shown option sends
+
+
+@dataclass
 class Heading:
     text: str
 
@@ -57,6 +65,7 @@ class Callout:
     title: str
     lines: list
     tone: str | None = None
+    slack_only: bool = False       # e.g. the preview's overrides, which only Slack can take
 
 
 @dataclass
@@ -103,7 +112,7 @@ def to_text(message):
     out = [message.title + (f" | {message.subtitle}" if message.subtitle else "")]
     if message.pills:
         out.append(" · ".join(text for text, _ in message.pills))
-    for block in message.blocks:
+    for block in (b for b in message.blocks if not getattr(b, "slack_only", False)):
         out.append("")
         if isinstance(block, Heading):
             out.append(block.text.upper())
@@ -188,7 +197,7 @@ def to_html(message):
         f'<span style="display:inline-block;background:{TONES[tone] if tone else "rgba(255,255,255,.18)"};'
         f'color:#fff;border-radius:10px;padding:2px 9px;font-size:12px;margin:8px 6px 0 0">{html_lib.escape(text)}</span>'
         for text, tone in message.pills)
-    body = "".join(_block(b) for b in message.blocks)
+    body = "".join(_block(b) for b in message.blocks if not getattr(b, "slack_only", False))
     footer = (f'<tr><td style="padding:12px 20px;font-size:12px;color:#6b7280;border-top:1px solid #e5e7eb">'
               f'{_h(message.footer)}</td></tr>' if message.footer else "")
     return (
@@ -271,12 +280,14 @@ def _slack_block(block):
         title = " ".join(t for t in (MARKS.get(block.tone, ""), f"*{slack.escape(block.title)}*" if block.title else "") if t)
         out, text = [], [title] if title else []
         for line in block.lines:
-            actions = [p for p in (line if isinstance(line, list) else [line]) if isinstance(p, Button) and p.action]
-            if not actions:
+            parts = line if isinstance(line, list) else [line]
+            controls = [p for p in parts if isinstance(p, Select) or isinstance(p, Button) and p.action]
+            if not controls:
                 text.append(_md(line).strip())
                 continue
-            out += slack.sections("\n".join(text)) if text else []         # a line of real buttons
-            out.append(slack.actions([slack.button(b.text, b.action, STYLES.get(b.tone)) for b in actions]))
+            out += slack.sections("\n".join(text)) if text else []         # a line of real buttons and menus
+            out.append(slack.actions([slack.menu(c.placeholder, c.options, c.initial) if isinstance(c, Select)
+                                      else slack.button(c.text, c.action, STYLES.get(c.tone)) for c in controls]))
             text = []
         return out + (slack.sections("\n".join(text)) if text else [])
     if isinstance(block, Bullets):

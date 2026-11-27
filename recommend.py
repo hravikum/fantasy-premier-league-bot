@@ -93,7 +93,7 @@ def plan_this_week(per_gw, players, team, gw, settings=optimizer.Settings()):
         return ThisWeek(wait, wait, 0.0, 0, {}, {})
     best = optimizer.plan(*args, settings)
 
-    out = ruled_out(per_gw, players, team.squad, gw)
+    out = {i: span for i, span in ruled_out(per_gw, players, team.squad, gw).items() if i not in settings.locked}
     final_squad = set(best.weeks[-1].xi) | set(best.weeks[-1].bench)   # sold and bought back = worth keeping
     sold, kept = {}, {}
     for i in sorted(out, key=lambda i: per_gw.loc[i].sum()):    # least worth keeping first

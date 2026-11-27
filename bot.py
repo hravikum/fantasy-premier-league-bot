@@ -38,8 +38,10 @@ import executor
 import model
 import news
 import optimizer
+import overrides
 import recommend
 import schedule
+import slack
 import team as team_module
 
 EASTERN = "America/New_York"
@@ -202,17 +204,18 @@ def preview(ctx):
     for n, decision in enumerate(decisions, start=1):
         decision["n"] = n
     # What the main run does if you say no to everything: no hits, no chip.
+    week = first
     if first.hits:
         base, wait, gain, _, sold, _ = recommend.plan_this_week(ctx.plan_xp, ctx.players, ctx.team, ctx.gw,
                                                                 optimizer.Settings(max_hits=0))
-        default = executor.decide(ctx.team, base.weeks[0], wait.weeks[0], gain, ctx.players, sold=sold)
+        week = base.weeks[0]
+        default = executor.decide(ctx.team, week, wait.weeks[0], gain, ctx.players, sold=sold)
     else:
         default = executor.decide(ctx.team, first, a.wait.weeks[0], a.gain, ctx.players, sold=a.sold)
-    code, proposal = None, None
-    if decisions:
-        code = approvals.new_code()
-        proposal = {"gw": ctx.gw, "code": code, "created": ctx.now.isoformat(), "decisions": decisions}
-        approvals.save(proposal)
+    # A code always, for your answers and overrides in Slack; saved with the message's ts once posted.
+    code = approvals.new_code()
+    proposal = {"gw": ctx.gw, "code": code, "created": ctx.now.isoformat(), "decisions": decisions}
+    approvals.save(proposal)
     write_watchlist(ctx, a.base)
 
     blocks = context_blocks(ctx)
@@ -226,6 +229,7 @@ def preview(ctx):
                               "you don't answer is skipped, and your latest answer counts until the main run, about "
                               "2 hours before the deadline.", "muted"))
         blocks.append(doc.Callout(f"{len(decisions)} decision{'s' if len(decisions) > 1 else ''} for you", lines, "warn"))
+    blocks.append(override_callout(ctx, code, default, week))
     blocks += executor.describe(default, ctx.players, "At the main run (about 2 hours before the deadline)"
                                 + ("" if not decisions else ", if you say no" if len(decisions) == 1
                                    else ", if you say no to everything"))
@@ -237,27 +241,48 @@ def preview(ctx):
     if decisions:
         subject += f": {len(decisions)} decision{'s' if len(decisions) > 1 else ''} for you [{code}]"
     sent = email(ctx, subject, msg)
-    if proposal and isinstance(sent, str):          # posted in Slack: the main run reads your taps from it
+    if isinstance(sent, str):                       # posted in Slack: the main run reads your taps from it
         approvals.save(dict(proposal, slack_ts=sent))
     return True
 
 
-def approved_actions(ctx, approved, notes):
-    """The actions for this week given the decisions you said yes to ({kind: decision}), or
-    (None, None) to fall back to the no-approval plan."""
+def override_callout(ctx, code, default, week):
+    """The preview's overrides, Slack only: Skip by each transfer the bot plans to make itself, the
+    captain menu, and what you've set so far (overrides.py)."""
+    name = ctx.players.set_index("id")["web_name"].to_dict()
+    moves = [(t["element_out"], t["element_in"]) for action in default if action.kind == "transfers"
+             for t in action.payload["transfers"]]
+    xp = ctx.per_gw[ctx.gw]
+    captains = [week.captain] + sorted((i for i in week.xi if i != week.captain), key=lambda i: -xp.get(i, 0))[:4]
+    try:
+        so_far = overrides.read(ctx.gw)
+    except Exception as problem:
+        print(f"(couldn't read your overrides from Slack: {type(problem).__name__}: {problem})")
+        so_far = overrides.Overrides()
+    lines = overrides.preview_lines(code, ctx.gw, moves, captains, so_far.captain, name)
+    said = overrides.describe(so_far, ctx.players)
+    if said:
+        lines.insert(0, [doc.Tone("So far: ", bold=True), said])
+    return doc.Callout("Change the bot's moves (optional)", lines, "info", slack_only=True)
+
+
+def approved_actions(ctx, approved, notes, yours=overrides.Overrides()):
+    """The actions for this week given the decisions you said yes to ({kind: decision}) and your
+    overrides, or (None, None) to fall back to the no-approval plan."""
     if not approved:
         return None, None
     team, players, gw = ctx.team, ctx.players, ctx.gw
     available, _ = team.chips_available(gw)
     chip = approved["chip"]["chip"] if "chip" in approved and approved["chip"]["chip"] in available else None
-    settings = optimizer.Settings(max_hits=0, triple_captain_gw=gw if chip == "3xc" else None,
-                                  bench_boost_gw=gw if chip == "bboost" else None)
+    settings = overrides.settings(optimizer.Settings(max_hits=0, triple_captain_gw=gw if chip == "3xc" else None,
+                                                     bench_boost_gw=gw if chip == "bboost" else None), yours, gw)
     args = (ctx.plan_xp, players, team.squad, team.bank, team.free_transfers, team.sell_prices)
     if chip in TRANSFER_CHIPS:
         if "transfers" in approved:
             notes.append(f"The {chips.NAMES[chip]} replaces the transfers you approved: it re-picks the squad.")
         xp = ctx.per_gw[[gw]] if chip == "freehit" else ctx.plan_xp
-        plan = optimizer.plan(xp, *args[1:], optimizer.Settings(wildcard_gw=gw, ft_value=0 if chip == "freehit" else 1.5))
+        plan = optimizer.plan(xp, *args[1:], overrides.settings(
+            optimizer.Settings(wildcard_gw=gw, ft_value=0 if chip == "freehit" else 1.5), yours, gw))
         week = plan.weeks[0]
         actions = []
         if week.transfers_in:
@@ -300,6 +325,12 @@ def main_run(ctx, job="main", record=None):
     if decisions:
         answers, more, in_slack = approvals.answers(proposal)
         notes += more
+    elif proposal and proposal.get("slack_ts") and slack.configured():
+        try:                                      # for closing the preview's Skip buttons and captain menu
+            in_slack = approvals.slack_message(proposal["slack_ts"])
+        except Exception as problem:
+            print(f"(couldn't read the preview's Slack message: {type(problem).__name__}: {problem})")
+    yours = your_overrides(ctx, notes)
     said = {"yes": "you said yes", "no": "you said no", None: "no answer, so no"}
     for d in decisions:
         notes.append(f"{d['n']}. {d['text']}: {said[answers.get(d['n'])]}.")
@@ -309,13 +340,14 @@ def main_run(ctx, job="main", record=None):
         notes.append(f"You've already played {chips.NAMES.get(active, active)} this gameweek; the bot keeps it.")
         if approved.pop("chip", None):
             notes.append("So the chip you approved wasn't played: one chip a gameweek.")
-    actions, chip = approved_actions(ctx, approved, notes)
+    actions, chip = approved_actions(ctx, approved, notes, yours)
     if actions is None and active in TRANSFER_CHIPS:
         notes.append("With that chip active, transfers and the lineup are left to you.")
         actions, chip = [], active
     elif actions is None:
-        settings = optimizer.Settings(max_hits=0, triple_captain_gw=ctx.gw if active == "3xc" else None,
-                                      bench_boost_gw=ctx.gw if active == "bboost" else None)
+        settings = overrides.settings(optimizer.Settings(max_hits=0, triple_captain_gw=ctx.gw if active == "3xc" else None,
+                                                         bench_boost_gw=ctx.gw if active == "bboost" else None),
+                                      yours, ctx.gw)
         base, wait, gain, _, sold, _ = recommend.plan_this_week(ctx.plan_xp, ctx.players, ctx.team, ctx.gw, settings)
         actions = executor.decide(ctx.team, base.weeks[0], wait.weeks[0], gain, ctx.players,
                                   chip=active, chip_already_set=bool(active), sold=sold)
@@ -339,6 +371,7 @@ def main_run(ctx, job="main", record=None):
     if success and record is not None:
         record["left_by_main"] = {"picks": team_key(after),
                                   "chances": {str(i): chance(ctx.players, i) for i in ctx.team.squad}}
+        record["captain"] = yours.captain           # your pick, which the final check keeps
     lineup = next((a for a in actions if a.kind == "lineup"), None)
     blocks = []
     if not success:
@@ -366,6 +399,22 @@ def main_run(ctx, job="main", record=None):
     else:
         email(True, f"ACTION NEEDED: GW{ctx.gw} {job} run couldn't make its changes", msg)
     return success, chip
+
+
+def your_overrides(ctx, notes):
+    """Your overrides for this gameweek from Slack (overrides.py), checked against today's squad and
+    news, with a note of what they are; none if Slack can't be read."""
+    try:
+        mine = overrides.read(ctx.gw)
+    except Exception as problem:
+        notes.append(f"Couldn't read your overrides from Slack ({type(problem).__name__}: {problem}), so the bot "
+                     "went ahead with its own plan.")
+        return overrides.Overrides()
+    mine = overrides.checked(mine, ctx.players, ctx.team.squad, notes)
+    said = overrides.describe(mine, ctx.players)
+    if said:
+        notes.append(f"Your overrides: {said}.")
+    return mine
 
 
 def team_key(picks):
@@ -436,7 +485,9 @@ def final_check(ctx, record):
                       f"Flagged since the main run: {', '.join(out)}.",
                       f"With a {chips.NAMES[chip]} active the bot leaves the lineup to you."], "bad")], alert=True))
         return True, chip
+    pick = overrides.checked(overrides.Overrides(captain=record.get("captain")), ctx.players, ctx.team.squad, [])
     settings = optimizer.Settings(frozen_gws={ctx.gw}, triple_captain_gw=ctx.gw if chip == "3xc" else None,
+                                  captain={ctx.gw: pick.captain} if pick.captain else {},
                                   bench_boost_gw=ctx.gw if chip == "bboost" else None)
     plan = optimizer.plan(ctx.plan_xp, ctx.players, ctx.team.squad, ctx.team.bank, ctx.team.free_transfers,
                           ctx.team.sell_prices, settings)

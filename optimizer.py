@@ -34,6 +34,7 @@ class Settings:
     transfer_limit: dict = field(default_factory=dict)   # gameweek -> most transfers allowed
     forced: dict = field(default_factory=dict)   # gameweek -> (ids in, ids out): exactly these transfers
     must_sell: dict = field(default_factory=dict)   # gameweek -> ids that must go that week (any replacement)
+    captain: dict = field(default_factory=dict)      # gameweek -> player id who must captain (your pick, overrides.py)
     club_max: dict = field(default_factory=dict)    # team id -> most players from that club (FPL's limit is 3)
     defence_max: int | None = None                  # most keepers + defenders from any one club
     # Soft club limit (your choice, Nov 26): each gameweek with 3 players from one club costs this,
@@ -145,6 +146,8 @@ def plan(xp, players, squad, bank, free_transfers, sell_prices=None, settings=Se
             constrain(row, owned[i] if t == 0 else 0, owned[i] if t == 0 else 0)
             constrain({s[t][i]: 1, x[t][i]: -1}, -np.inf, 0)         # start only if in squad
             constrain({c[t][i]: 1, s[t][i]: -1}, -np.inf, 0)         # captain only if starting
+        if settings.captain.get(gw) in ids:                          # your pick: he starts and captains
+            constrain({c[t][int(np.where(ids == settings.captain[gw])[0][0])]: 1}, 1, 1)
         for pos, quota in QUOTA.items():
             members = np.where(pool["position"].to_numpy() == pos)[0]
             constrain({x[t][i]: 1 for i in members}, quota, quota)

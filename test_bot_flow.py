@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 import approvals
+import overrides
 import auth
 import bot
 import data
@@ -256,6 +257,36 @@ def test_a_tap_in_slack_counts_and_the_main_run_closes_the_buttons(fpl, monkeypa
     body = server.emails[-1][1]
     assert "1. Take 1 hit: you said no" in body and "2. Play Bench Boost: you said yes" in body
     assert closed and closed[0][0] == "1.2" and closed[0][1].startswith("🔒 Answers closed at the main run")
+
+
+def test_your_overrides_steer_the_main_run_and_the_final_check_keeps_your_captain(fpl, monkeypatch):
+    server = fpl()
+    deadline = server.deadlines[GW]
+    squad = [p["element"] for p in server.picks]
+    fit = server.players[server.players.id.isin(squad) & server.players.status.eq("a")]
+    pick = int(fit[fit.element_type > 1].sort_values("total_points").id.iloc[0])     # the bot wouldn't captain him
+    best_outsider = next(int(i) for i in server.players.sort_values("total_points", ascending=False).id if i not in squad)
+    monkeypatch.setattr(overrides, "read", lambda gw: overrides.Overrides(captain=pick, ban={best_outsider}))
+    assert bot.tick(deadline - pd.Timedelta(hours=2), live=True) == "main"
+    lineup = [payload for path, payload in server.posts if path == "my-team/99/"][-1]
+    assert next(p for p in lineup["picks"] if p["is_captain"])["element"] == pick
+    bought = [t["element_in"] for path, payload in server.posts if path == "transfers/" for t in payload["transfers"]]
+    assert best_outsider not in bought
+    name = server.players.set_index("id").loc[pick, "web_name"]
+    assert f"Your overrides: don't buy" in server.emails[-1][1] and f"captain {name}" in server.emails[-1][1]
+    sent = len(server.posts)
+    assert bot.tick(deadline - pd.Timedelta(minutes=45), live=True) == "final"
+    assert len(server.posts) == sent                     # your captain kept: nothing to fix
+
+
+def test_the_preview_puts_the_override_controls_in_slack_only(fpl):
+    server = fpl()
+    assert bot.tick(server.deadlines[GW] - pd.Timedelta(hours=24), live=True) == "preview"
+    channel = server.slack[-1][0][0]["layouts"][0]
+    menus = [e for b in channel if b["type"] == "actions" for e in b["elements"] if e["type"] == "static_select"]
+    code = approvals.load(GW)["code"]                     # a code even without decisions
+    assert menus and all(o["value"].startswith(f"{code}|captain.gw{GW}|") for o in menus[0]["options"])
+    assert "Change the bot's moves" not in server.emails[-1][1] and "Change the bot" not in server.emails[-1][2]
 
 
 def test_a_chip_you_played_yourself_is_kept(fpl):

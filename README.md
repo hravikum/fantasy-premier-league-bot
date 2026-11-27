@@ -153,6 +153,17 @@ channel instead of email (`mailer.py`, `slack.py`, `doc.to_slack`):
   gave it. The main run reads your answers, then swaps the buttons for "🔒 Answers closed".
   Taps go to a small Cloudflare Worker (`slack-worker/worker.js`, free plan), which checks they
   came from Slack and from you and writes the answer into the message; it keeps nothing itself.
+- **Your overrides** on the bot's own moves (`overrides.py`), for the coming gameweek only, until
+  the main run; if you set none, the bot goes ahead as planned:
+  - the preview has **Skip it / Do it** by each transfer the bot plans to make itself (skipped, the
+    main run re-plans without it: it keeps the player going out, doesn't buy the one coming in, and
+    may make a different move that clears the 1-point bar), and a **captain menu**;
+  - for any player, any time: `/fpl keep <name>` (won't sell him), `/fpl ban <name>` (won't buy
+    him), `/fpl captain <name>` (if he's in your squad and fit, 75%+); `/fpl list` shows what you've
+    set, `/fpl explain <name>` why the model rates him, `/fpl help` the commands. Each confirmation
+    in the channel has an Undo. Within 2½ hours of the deadline it says to use the FPL site instead.
+  - The main-run message lists the overrides it applied, and why a captain pick didn't stand.
+  `/fpl` starts the workflow's `slack-command` job (no login), so its answer takes a minute or so.
 
 Setting it up, once (same workspace as the ESPN bot, its own app and channel):
 1. In the workspace, create a channel such as `#fantasy-premier-league`. On your phone, set its
@@ -184,6 +195,18 @@ The Yes/No buttons, once (about 15 minutes):
    reads your answer back the way the main run will, says what it read in the test's thread, and
    closes the test.
 
+The `/fpl` command, once (about 10 minutes):
+1. GitHub → your profile → Settings → Developer settings → Fine-grained tokens → Generate new
+   token: only this repository, Repository permissions → Actions: Read and write. Copy it.
+2. The Worker's Settings → Variables and Secrets → add the secret `GITHUB_TOKEN` with it. Then Edit
+   code, paste the new `slack-worker/worker.js`, and Deploy.
+3. The Slack app: Slash Commands → Create New Command: command `/fpl`, Request URL the Worker's
+   address (the same as Interactivity's), short description "FPL bot overrides", usage hint
+   `keep Saka · ban Haaland · captain Salah · explain Isak · list`. Save, then reinstall the app
+   when Slack asks (it adds the `commands` permission).
+4. In `#fantasy-premier-league`, type `/fpl help` (answered at once, only to you), then
+   `/fpl list`: within a minute or so the bot posts "Your overrides for GW…".
+
 To change the Worker later, paste the new `worker.js` the same way. Its tests: `node slack-worker/worker.test.js`.
 
 After a gameweek in which every email had its Slack twin, delete `EMAIL_TOO`. To go back to email
@@ -195,6 +218,7 @@ only, delete the two Slack secrets.
 |---|---|
 | `dry-run` | The report, sent (Slack or email) |
 | `slack-check` | Tests the Slack Yes/No buttons: run, tap, run again (Slack, above) |
+| `slack-command` | What `/fpl` starts (the Worker sends what you typed); runs `overrides.py` |
 | `preview`, `main`, `final` | Runs that job now; respects `BOT_LIVE`; doesn't touch the schedule |
 | `check-write` | The no-op write check |
 | `explain` (with a player name) | Why the model rates him as it does, and what he'd add to your team |
@@ -204,7 +228,7 @@ only, delete the two Slack secrets.
 ```
 python3 recommend.py --team 1234567        # the report from public data
 python3 explain.py Haaland --team 1234567  # why the model rates a player as it does, and his value to your team
-python3 -m pytest -q                       # 85 tests, including preview → main → final against a fake FPL
+python3 -m pytest -q                       # 100 tests, including preview → main → final against a fake FPL
 python3 backtest.py                        # projections vs. past gameweeks
 ```
 

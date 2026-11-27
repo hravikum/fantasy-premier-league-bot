@@ -176,6 +176,17 @@ def button(text, value, style=None):
     return out
 
 
+def menu(placeholder, options, initial=""):
+    """A drop-down whose choice is sent like a button's value. options: (label, value), at most 100."""
+    choices = [{"text": {"type": "plain_text", "text": label[:75]}, "value": value} for label, value in options[:100]]
+    out = {"type": "static_select", "action_id": options[0][1].rsplit("|", 1)[0],
+           "placeholder": {"type": "plain_text", "text": placeholder[:150]}, "options": choices}
+    shown = next((c for c in choices if c["value"] == initial), None)
+    if shown:
+        out["initial_option"] = shown
+    return out
+
+
 def divider():
     return {"type": "divider"}
 

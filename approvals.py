@@ -41,7 +41,7 @@ NUMBERED = re.compile(r"#?\b(\d{1,2})\b\s*[:.)=\-]?\s*(yes|y|ok|okay|approve|app
 PLAIN = re.compile(r"\b(yes|ok|okay|approve|approved|no|nope|decline|skip)\b", re.I)
 REVERSED = re.compile(r"\b(yes|ok|okay|approve|approved|no|nope|decline|skip)\b\s*(?:to|for|on)?\s*#?(\d{1,2})\b", re.I)
 BUTTON = re.compile(r"#(\d{1,2})\s+(YES|NO)\b")
-ANSWER = re.compile(r"^answer-(\d{1,2})-(yes|no)-(\d+)$")    # the block worker.js writes for your tap
+RECORD = re.compile(r"^answer-([a-z0-9.]+)-([a-z0-9]+)-(\d+)$")   # worker.js writes one for each tap: key, choice, time
 TEST_CODE = "fpl-test"
 
 
@@ -171,14 +171,29 @@ def slack_message(ts):
     return found[0]
 
 
-def slack_answers(message):
-    """{decision number: ('yes'/'no', unix time)} from the answers worker.js wrote into the message."""
+def records(message):
+    """{key: (choice, unix time)} from the blocks worker.js (or overrides.py) wrote into a message: a
+    decision's number and yes/no, or an override such as keep.123.gw13 and on/off."""
     found = {}
     for block in message.get("blocks", []):
-        match = ANSWER.match(block.get("block_id", ""))
+        match = RECORD.match(block.get("block_id", ""))
         if match:
-            found[int(match[1])] = (match[2], int(match[3]))
+            found[match[1]] = (match[2], int(match[3]))
     return found
+
+
+def slack_answers(message):
+    """{decision number: ('yes'/'no', unix time)} from the answers worker.js wrote into the message."""
+    return {int(key): found for key, found in records(message).items()
+            if key.isdigit() and len(key) <= 2 and found[0] in ("yes", "no")}
+
+
+def values(block):
+    """What an actions block's buttons and menus send when used."""
+    out = []
+    for element in block.get("elements", []) if block.get("type") == "actions" else []:
+        out += [element["value"]] if "value" in element else [o.get("value", "") for o in element.get("options", [])]
+    return out
 
 
 def answers(proposal):
@@ -213,8 +228,8 @@ def close_slack(proposal, message, note):
     keeping your answers: a re-run of the main run reads them again."""
     code, blocks = proposal["code"], []
     for block in message.get("blocks", []):
-        values = [e.get("value", "") for e in block.get("elements", [])] if block.get("type") == "actions" else []
-        if values and all(v.startswith(code + "|") for v in values):
+        sends = values(block)
+        if sends and all(v.startswith(code + "|") for v in sends):
             blocks.append(slack.context(note))
         else:
             blocks.append(block)
@@ -228,8 +243,8 @@ def slack_check():
     way the main run does, says what it read in the test's thread, and closes the test."""
     history = slack.call("conversations.history", {"channel": os.environ["SLACK_CHANNEL"], "limit": 30},
                          form=True)["messages"]
-    test = next((m for m in history for b in m.get("blocks", []) if b.get("type") == "actions"
-                 and any(e.get("value", "").startswith(TEST_CODE + "|") for e in b.get("elements", []))), None)
+    test = next((m for m in history for b in m.get("blocks", [])
+                 if any(v.startswith(TEST_CODE + "|") for v in values(b))), None)
     if test is None:
         message = doc.Message("Slack buttons check", blocks=[doc.Callout("1 test decision", [
             [doc.Tone("1. ", bold=True), "A test: nothing happens either way"], buttons(TEST_CODE, 1),

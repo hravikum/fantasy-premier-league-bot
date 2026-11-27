@@ -11,10 +11,14 @@ on:
       job:
         description: Which job (cron-job.org sends tick)
         type: choice
-        options: [dry-run, tick, preview, main, final, check-write, explain, slack-check]
+        options: [dry-run, tick, preview, main, final, check-write, explain, slack-check, slack-command]
         default: dry-run
       player:
         description: For explain, the player's name as FPL shows it (e.g. Haaland)
+        type: string
+        default: ""
+      command:
+        description: For slack-command, what you typed after /fpl (the Slack Worker sends it)
         type: string
         default: ""
       email:
@@ -28,9 +32,9 @@ permissions:
   contents: write     # to save state (encrypted login, schedule, write log) to the bot-state branch
 
 concurrency:
-  # One run at a time: two runs would both try to renew the login. Explain and slack-check runs don't
-  # log in, so they run alongside (and can't knock a queued tick out of the queue).
-  group: ${{ (inputs.job == 'explain' || inputs.job == 'slack-check') && format('{0}-{1}', inputs.job, github.run_id) || 'fpl' }}
+  # One run at a time: two runs would both try to renew the login. Explain, slack-check and
+  # slack-command runs don't log in, so they run alongside (and can't knock a queued tick out of the queue).
+  group: ${{ (inputs.job == 'explain' || inputs.job == 'slack-check' || inputs.job == 'slack-command') && format('{0}-{1}', inputs.job, github.run_id) || 'fpl' }}
   cancel-in-progress: false
 
 jobs:
@@ -60,8 +64,16 @@ jobs:
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
+      - name: Answer a /fpl command from Slack
+        if: inputs.job == 'slack-command'
+        run: python overrides.py "$COMMAND"
+        env:
+          COMMAND: ${{ inputs.command }}
+          FPL_TEAM_ID: ${{ vars.FPL_TEAM_ID }}
+          SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+          SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       - name: Bot
-        if: inputs.job != 'explain' && inputs.job != 'slack-check'
+        if: inputs.job != 'explain' && inputs.job != 'slack-check' && inputs.job != 'slack-command'
         run: bash hosted_run.sh --job "${JOB:-dry-run}" ${{ (github.event_name == 'workflow_dispatch' && inputs.job == 'dry-run' && inputs.email) && '--email' || '' }}
         env:
           JOB: ${{ inputs.job }}

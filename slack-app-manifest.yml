@@ -2,8 +2,9 @@
 # has its own token, signing secret and tap address. Paste this at api.slack.com/apps > Create New App >
 # From a manifest (README, "Slack"). chat:write lets it post to channels it has been invited to, and
 # channels:history lets the main run read your Yes/No answers back from the preview (a public channel).
-# The buttons need Interactivity on, with the Worker's address as the Request URL (README, "Slack"):
-# it isn't in this file because a manifest won't take a placeholder address.
+# The buttons need Interactivity on, with the Worker's address as the Request URL, and /fpl needs a
+# slash command with the same address (README, "Slack"): neither is in this file because a manifest
+# won't take a placeholder address. commands lets the app have the slash command.
 display_information:
   name: Fantasy Premier League Bot
   description: Previews, decisions and results for your Fantasy Premier League team.
@@ -16,6 +17,7 @@ oauth_config:
     bot:
       - chat:write
       - channels:history
+      - commands
 settings:
   org_deploy_enabled: false
   socket_mode_enabled: false
