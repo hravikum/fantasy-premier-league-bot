@@ -1,6 +1,6 @@
 {
- "gw": 12,
- "deadline": "2026-11-27T18:30:00+00:00",
+ "gw": 13,
+ "deadline": "2026-12-01T18:30:00+00:00",
  "players": [
   {
    "id": 385,
@@ -12,18 +12,18 @@
    "fpl_news": ""
   },
   {
-   "id": 504,
-   "name": "Vuskovic",
-   "team": "Brighton",
+   "id": 332,
+   "name": "Justin",
+   "team": "Leeds",
    "position": "DEF",
    "fpl_status": "a",
    "fpl_chance": 100.0,
    "fpl_news": ""
   },
   {
-   "id": 332,
-   "name": "Justin",
-   "team": "Leeds",
+   "id": 504,
+   "name": "Vuskovic",
+   "team": "Brighton",
    "position": "DEF",
    "fpl_status": "a",
    "fpl_chance": 100.0,
@@ -48,18 +48,18 @@
    "fpl_news": ""
   },
   {
-   "id": 366,
-   "name": "Wirtz",
-   "team": "Liverpool",
+   "id": 542,
+   "name": "E.Le F\u00e9e",
+   "team": "Sunderland",
    "position": "MID",
    "fpl_status": "a",
    "fpl_chance": 100.0,
    "fpl_news": ""
   },
   {
-   "id": 542,
-   "name": "E.Le F\u00e9e",
-   "team": "Sunderland",
+   "id": 366,
+   "name": "Wirtz",
+   "team": "Liverpool",
    "position": "MID",
    "fpl_status": "a",
    "fpl_chance": 100.0,
@@ -84,18 +84,18 @@
    "fpl_news": ""
   },
   {
-   "id": 79,
-   "name": "Evanilson",
-   "team": "Bournemouth",
+   "id": 379,
+   "name": "Isak",
+   "team": "Liverpool",
    "position": "FWD",
    "fpl_status": "a",
    "fpl_chance": 100.0,
    "fpl_news": ""
   },
   {
-   "id": 379,
-   "name": "Isak",
-   "team": "Liverpool",
+   "id": 79,
+   "name": "Evanilson",
+   "team": "Bournemouth",
    "position": "FWD",
    "fpl_status": "a",
    "fpl_chance": 100.0,
@@ -120,18 +120,18 @@
    "fpl_news": ""
   },
   {
-   "id": 31,
-   "name": "Konsa",
-   "team": "Arsenal",
+   "id": 534,
+   "name": "Hume",
+   "team": "Sunderland",
    "position": "DEF",
    "fpl_status": "a",
    "fpl_chance": 100.0,
    "fpl_news": ""
   },
   {
-   "id": 534,
-   "name": "Hume",
-   "team": "Sunderland",
+   "id": 31,
+   "name": "Konsa",
+   "team": "Arsenal",
    "position": "DEF",
    "fpl_status": "a",
    "fpl_chance": 100.0,
@@ -151,6 +151,15 @@
    "name": "Haaland",
    "team": "Man City",
    "position": "FWD",
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
+  },
+  {
+   "id": 124,
+   "name": "Gro\u00df",
+   "team": "Brighton",
+   "position": "MID",
    "fpl_status": "a",
    "fpl_chance": 100.0,
    "fpl_news": ""
