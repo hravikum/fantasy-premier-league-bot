@@ -1,13 +1,13 @@
 {
   "gw": 12,
-  "checked_at": "2026-11-27T05:46:52Z",
+  "checked_at": "2026-11-27T11:47:39Z",
   "players": [
     {
       "id": 31,
       "name": "Konsa",
-      "start_chance": 0.75,
-      "reason": "Both main predicted XIs still have him beside Gabriel v Man City and the Standard says Saliba coming straight back in would be a surprise, but Saliba has returned to the matchday squad and Fantasy Football Pundit only gives Konsa about a 60% start, with Arteta's Friday press conference still to come.",
-      "source": "https://uk.sports.yahoo.com/news/arsenal-xi-vs-man-city-150612837.html"
+      "start_chance": 0.7,
+      "reason": "Every predicted Arsenal XI (RotoWire, Evening Standard, Opta Analyst) still pairs him with Gabriel against Man City, but Saliba is back in the matchday squad after his back injury, Fantasy Football Pundit gives Konsa only about a 60% start and Fantasy Football Scout tags him as a rotation risk, with Arteta's Friday-afternoon press conference not yet held at check time.",
+      "source": "https://www.rotowire.com/soccer/article/arsenal-vs-manchester-city-prediction-predicted-lineups-team-news-148253"
     }
   ],
   "teams_checked": [
@@ -23,5 +23,5 @@
     "Bournemouth",
     "Brighton"
   ],
-  "notes": "Early Friday run: Arteta's press conference (Fri afternoon) and other Friday pressers for Sunday games had not happened yet, so Konsa/Saliba could still change. Raya is no longer on the watchlist and was dropped from this file. No new fitness news since Thursday for anyone else: Rogers in predicted XIs for Forest v Chelsea tonight; Trafford, Justin (Rodon fit again but Farke expected to keep the same back three) and Rudoni in predicted XIs for Leeds v Coventry; N.Jackson predicted to start at Ipswich; Wirtz, Isak, Barcola in Liverpool predicted XIs; Calafiori expected back after being rested midweek; Haaland predicted to start; Kinsky predicted in goal at Sunderland; Le Fee and Hume in Sunderland predicted XI. Bournemouth: Rose reported no new injuries; a FotMob 'Tavernier suffers another hamstring injury' headline is an old article from a previous season and was ignored. Fantasy Football Scout tags Tavernier with a suspension flag (likely yellow-card risk), not a ban for this match. Brighton: no new Vuskovic news found; a Soccerway Hurzeler piece found was from an earlier season. Some pages (Yorkshire Evening Post Farke presser, thisisanfield, Sunderland Echo, Sussex Express) could not be read."
+  "notes": "Late-morning Friday run (about 11:45 UTC): the 13:30 Friday press conferences (Arteta, Iraola and others) had not happened yet, so Konsa/Saliba could still change. No other watchlist player has news beyond FPL's flags. Calafiori expected back at left-back after being rested v Dortmund; Raya (not on watchlist) a doubt, Kepa predicted. Haaland in City predicted XIs, no fitness news. Wirtz, Isak, Barcola in predicted Liverpool XI at Everton (Sun) after the 3-0 win at Club Brugge. Rogers predicted to start at Forest tonight (has started every league game). Leeds official site: everyone available; Trafford and Justin in predicted XI; Rudoni in Coventry predicted XI. N.Jackson in both predicted Villa XIs at Ipswich; Emery presser page could not be read. Sunderland: Le Fee started v Jagiellonia on Thursday (off 65'), Trai Hume taken off at half-time; both in predicted XIs v Spurs; one preview expects Le Bris to rotate generally but nothing names them. Kinsky predicted in Spurs goal. Bournemouth won at Celta Vigo Thursday; Tavernier and Evanilson in Sports Mole predicted XI at Fulham (FFS suspension-risk tag on Tavernier is yellow-card risk, not a ban). Brighton v Newcastle: Vuskovic in FFP predicted XI (dated 27 Nov), no specific news found. Pages that could not be read: arsenal.com presser transcript, Yorkshire Evening Post Farke presser, Squawka, bet365, Sunderland Echo, Flashscore Emery."
 }
