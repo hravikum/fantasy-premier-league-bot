@@ -3,9 +3,9 @@
  "deadline": "2026-11-27T18:30:00+00:00",
  "players": [
   {
-   "id": 496,
-   "name": "Kinsky",
-   "team": "Spurs",
+   "id": 385,
+   "name": "Trafford",
+   "team": "Leeds",
    "position": "GK",
    "fpl_status": "a",
    "fpl_chance": 100.0,
@@ -21,13 +21,13 @@
    "fpl_news": ""
   },
   {
-   "id": 229,
-   "name": "Tarkowski",
-   "team": "Everton",
+   "id": 332,
+   "name": "Justin",
+   "team": "Leeds",
    "position": "DEF",
-   "fpl_status": "s",
-   "fpl_chance": 0.0,
-   "fpl_news": "Suspended until 13 Dec"
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
   },
   {
    "id": 8,
@@ -102,13 +102,13 @@
    "fpl_news": ""
   },
   {
-   "id": 1,
-   "name": "Raya",
-   "team": "Arsenal",
+   "id": 496,
+   "name": "Kinsky",
+   "team": "Spurs",
    "position": "GK",
-   "fpl_status": "d",
-   "fpl_chance": 50.0,
-   "fpl_news": "Shoulder injury - 50% chance of playing"
+   "fpl_status": "a",
+   "fpl_chance": 100.0,
+   "fpl_news": ""
   },
   {
    "id": 627,
@@ -132,24 +132,6 @@
    "id": 534,
    "name": "Hume",
    "team": "Sunderland",
-   "position": "DEF",
-   "fpl_status": "a",
-   "fpl_chance": 100.0,
-   "fpl_news": ""
-  },
-  {
-   "id": 385,
-   "name": "Trafford",
-   "team": "Leeds",
-   "position": "GK",
-   "fpl_status": "a",
-   "fpl_chance": 100.0,
-   "fpl_news": ""
-  },
-  {
-   "id": 332,
-   "name": "Justin",
-   "team": "Leeds",
    "position": "DEF",
    "fpl_status": "a",
    "fpl_chance": 100.0,
