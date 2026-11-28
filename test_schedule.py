@@ -167,11 +167,14 @@ def test_news_is_used_only_when_fresh_and_for_this_gameweek(tmp_path, monkeypatc
     assert "may have stopped" in "\n".join(news.load(12, now)[1])
 
 
-def test_chip_values_count_setting_the_team_up_for_them():
+def test_chip_values_count_setting_the_team_up_for_them(monkeypatch):
     """Bench Boost re-planned with the chip in its week is worth at least the bench as it stands: with
     money and free transfers the plan can buy a bench that plays. Past the plan, the bench as it stands."""
     import team
+    import numpy as np
+    import test_optimizer
     from test_optimizer import GWS, cheapest_squad, make_pool
+    monkeypatch.setattr(test_optimizer, "RNG", np.random.default_rng(7))   # the same pool whatever ran before
     players, xp = make_pool()
     squad = cheapest_squad(players)
     mine = team.Team(1, "x", squad, 20.0, 2, {})
@@ -187,7 +190,7 @@ def test_chip_values_count_setting_the_team_up_for_them():
     assert set(found.pairs) == {(10, 11), (10, 12), (11, 12)}
 
 
-def test_a_chip_week_is_offered_only_when_setting_up_for_it_changes_this_week():
+def test_a_chip_week_is_offered_only_when_setting_up_for_it_changes_this_week(monkeypatch):
     """The preview asks to plan around a Bench Boost week only when it would change this week's
     transfers, not for a week you said no to or already agreed to, and moves an agreed week only for
     chips.MOVE_BY more."""
@@ -195,7 +198,10 @@ def test_a_chip_week_is_offered_only_when_setting_up_for_it_changes_this_week():
     import optimizer
     import recommend
     import team
+    import numpy as np
+    import test_optimizer
     from test_optimizer import GWS, cheapest_squad, make_pool
+    monkeypatch.setattr(test_optimizer, "RNG", np.random.default_rng(7))   # the same pool whatever ran before
     players, xp = make_pool()
     mine = team.Team(1, "x", cheapest_squad(players), 20.0, 2, {})
     table = pd.DataFrame({"bboost": [10.0, 11.0, 14.0]}, index=GWS)
