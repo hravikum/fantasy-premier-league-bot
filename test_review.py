@@ -100,12 +100,17 @@ class FakeGameweek:
             "entry/1/event/13/picks/": {"picks": self.mine, "active_chip": None,
                                         "entry_history": {"points": review.score(self.mine, self.live, POSITIONS)[0],
                                                           "event_transfers_cost": 0, "overall_rank": 2_900_000}},
-            "entry/1/history/": {"current": [{"event": 12, "overall_rank": 3_363_408}]},
+            "entry/1/history/": {"current": [{"event": 12, "overall_rank": 3_363_408, "total_points": 637},
+                                             {"event": 13, "points": 53, "event_transfers_cost": 0, "total_points": 690}]},
             "entry/1/": {"leagues": {"classic": [{"id": 77, "name": "Overall"}, {"id": 99, "name": "The Slash "}]}},
             "leagues-classic/99/standings/": {"standings": {"has_next": False, "results": [
-                {"entry": 2, "entry_name": "Rival FC", "rank": 1, "last_rank": 1, "total": 700, "event_total": 70},
-                {"entry": 1, "entry_name": "FC Barcelona", "rank": 2, "last_rank": 3, "total": 690, "event_total": 53},
-                {"entry": 3, "entry_name": "Third XI", "rank": 3, "last_rank": 2, "total": 680, "event_total": 40}]}},
+                {"entry": 3, "entry_name": "Third XI", "rank": 1, "last_rank": 1, "total": 999, "event_total": 2},
+                {"entry": 2, "entry_name": "Rival FC", "rank": 2, "last_rank": 2, "total": 998, "event_total": 2},
+                {"entry": 1, "entry_name": "FC Barcelona", "rank": 3, "last_rank": 3, "total": 997, "event_total": 0}]}},
+            "entry/2/history/": {"current": [{"event": 12, "total_points": 650, "points": 60, "event_transfers_cost": 0},
+                                             {"event": 13, "total_points": 716, "points": 70, "event_transfers_cost": 4}]},
+            "entry/3/history/": {"current": [{"event": 12, "total_points": 640, "points": 60, "event_transfers_cost": 0},
+                                             {"event": 13, "total_points": 680, "points": 40, "event_transfers_cost": 0}]},
             "entry/2/event/13/picks/": rival,
             "entry/3/event/13/picks/": {"picks": team(captain=10), "active_chip": None, "entry_history": {}},
             "entry/2/transfers/": [{"event": 13, "element_out": 9, "element_in": 16}, {"event": 12, "element_out": 1, "element_in": 2}],
@@ -135,7 +140,9 @@ def test_the_review(tmp_path, monkeypatch):
     assert "Your changes: +10" in body and "Armband: yours P11 12 ×2; the bot's P10 2 ×2." in body
     assert "automatic subs: P4 → P13 6" in body
     assert "Projected 36.0, scored 37" in body and "Transfer P16 → P11: P11 scored 12" in body
-    assert "You're 2nd of 3" in body and "Rival FC: Bench Boost" in body and "Rival FC: P9 → P16 (-4)" in body
+    # after GW13 (from the teams' histories, not today's standings): Rival FC 716, you 690 (from 3rd), Third XI 680
+    assert "You're 2nd of 3 (after GW12: 3rd). This week you scored 53; Rival FC had the most, 66." in body
+    assert "Rival FC: Bench Boost" in body and "Rival FC: P9 → P16 (-4)" in body
     assert "Bench Boost: you said no; it would have added 9." in body     # 50 with all 15, 41 with the sub
     assert "You told the bot not to buy P16: he scored 9." in body
     assert "Your changes vs the bot's lineups: +8 over 2 gameweeks (1 better, 1 worse, 0 the same)." in body

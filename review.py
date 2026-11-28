@@ -162,6 +162,7 @@ def _signed(x):
 def you_vs_bot(gw, mine, bot, live, names, cost, bot_hits):
     """Blocks and the two scores (yours net of hits, the bot's net of its hits)."""
     yours_raw, your_xi, your_subs, your_arm = score(mine["picks"], live, names.position, mine.get("active_chip"))
+    print(f"Scoring check, GW{gw}: your team scores {yours_raw} the bot's way; FPL says {mine['points']}.")
     blocks = [doc.Heading(f"You vs the bot, GW{gw}")]
     if bot is None:
         return blocks + [doc.Para("The bot's lineup for this gameweek wasn't kept, so there's nothing to compare.",
@@ -243,7 +244,9 @@ def model_check(gw, bot, live, names):
 
 
 def the_slash(gw, entry_id, names, get=None):
-    """Blocks, and (your rank, entries) in the league, or (None, None) if it isn't found."""
+    """Blocks, and (your rank, teams) in the league after this gameweek, or (None, None) if it isn't
+    found. Scores and ranks come from each team's own history for this gameweek: the league's
+    standings show the gameweek being played now, which is a later one once the next deadline passes."""
     get = get or data.get
     blocks = [doc.Heading(f"Mini-league: {LEAGUE}, after GW{gw}")]
     leagues = get(f"entry/{entry_id}/").get("leagues", {}).get("classic", [])
@@ -251,48 +254,59 @@ def the_slash(gw, entry_id, names, get=None):
     if league is None:
         return blocks + [doc.Para(f"Couldn't find {LEAGUE} among your leagues.", tone="muted")], None, None
     standings = get(f"leagues-classic/{league['id']}/standings/")["standings"]
-    results = standings["results"]
-    rows, slack_rows, captains, chips_played, moves = [], [["#", "Team", "GW", "Total", "Captain"]], {}, [], []
-    me = None
-    for r in results:
-        captain, chip = "", None
-        if len(rows) < MAX_RIVALS or r["entry"] == entry_id:
-            picks = get(f"entry/{r['entry']}/event/{gw}/picks/")
-            cap = next((p["element"] for p in picks["picks"] if p["is_captain"]), None)
-            captain, chip = names(cap) if cap else "", picks.get("active_chip")
-            captains[captain] = captains.get(captain, 0) + 1
-            if r["entry"] != entry_id:
-                made = [t for t in get(f"entry/{r['entry']}/transfers/") if t["event"] == gw]
-                if made:
-                    cost = picks.get("entry_history", {}).get("event_transfers_cost", 0)
-                    moves.append(f"{r['entry_name']}: " + ", ".join(f"{names(t['element_out'])} → {names(t['element_in'])}"
-                                                                   for t in made) + (f" (-{cost})" if cost else ""))
-            if chip:
-                chips_played.append(f"{r['entry_name']}: {CHIP_NAMES.get(chip, chip)}")
-        if r["entry"] == entry_id:
-            me = r
-        change = (r.get("last_rank") or r["rank"]) - r["rank"]
+    members = standings["results"][:MAX_RIVALS]
+    members += [r for r in standings["results"][MAX_RIVALS:] if r["entry"] == entry_id]
+    teams = []
+    for r in members:
+        history = {h["event"]: h for h in get(f"entry/{r['entry']}/history/")["current"]}
+        if gw not in history:                    # joined after this gameweek
+            continue
+        now, before = history[gw], history.get(gw - 1, {})
+        picks = get(f"entry/{r['entry']}/event/{gw}/picks/")
+        cap = next((p["element"] for p in picks["picks"] if p["is_captain"]), None)
+        made = [t for t in get(f"entry/{r['entry']}/transfers/") if t["event"] == gw] if r["entry"] != entry_id else []
+        cost = now.get("event_transfers_cost", 0)
+        teams.append({"entry": r["entry"], "name": r["entry_name"] + (" (you)" if r["entry"] == entry_id else ""),
+                      "points": now["points"] - cost, "total": now["total_points"],
+                      "before": before.get("total_points"), "captain": names(cap) if cap else "",
+                      "chip": picks.get("active_chip"), "cost": cost, "moves": made})
+    rank = lambda team, key: 1 + sum(t[key] is not None and team[key] is not None and t[key] > team[key] for t in teams)
+    for t in teams:
+        t["rank"] = rank(t, "total")
+        t["was"] = rank(t, "before") if t["before"] is not None else None
+    teams.sort(key=lambda t: (t["rank"], t["name"]))
+    rows, slack_rows = [], [["#", "Team", "GW", "Total", "Captain"]]
+    for t in teams:
+        change = (t["was"] or t["rank"]) - t["rank"]
         moved = f" ↑{change}" if change > 0 else f" ↓{-change}" if change < 0 else ""
-        team = r["entry_name"] + (" (you)" if r["entry"] == entry_id else "")
-        rows.append([f"{r['rank']}{moved}", team, str(r["event_total"]), str(r["total"]), captain])
-        slack_rows.append([f"{r['rank']}{moved}", team, str(r["event_total"]), str(r["total"]), captain])
+        cells = [f"{t['rank']}{moved}", t["name"], str(t["points"]), str(t["total"]), t["captain"]]
+        rows.append(cells)
+        slack_rows.append(list(cells))
+    me = next((t for t in teams if t["entry"] == entry_id), None)
     lines = []
     if me:
-        best = max(results, key=lambda r: r["event_total"])
-        lines.append([doc.Tone(f"You're {_ordinal(me['rank'])} of {len(results)}", bold=True),
-                      f" (after GW{gw - 1}: {_ordinal(me.get('last_rank') or me['rank'])}). This week you scored "
-                      f"{me['event_total']}; {best['entry_name']} had the most, {best['event_total']}."])
+        best = max(teams, key=lambda t: t["points"])
+        lines.append([doc.Tone(f"You're {_ordinal(me['rank'])} of {len(teams)}", bold=True),
+                      (f" (after GW{gw - 1}: {_ordinal(me['was'])})" if me["was"] else "")
+                      + f". This week you scored {me['points']}; {best['name']} had the most, {best['points']}."])
+    captains = {}
+    for t in teams:
+        if t["captain"]:
+            captains[t["captain"]] = captains.get(t["captain"], 0) + 1
     if captains:
         top, count = max(captains.items(), key=lambda kv: kv[1])
         lines.append(f"Most captained: {top} ({count} of {sum(captains.values())}).")
-    lines.append("Chips played: " + ("; ".join(chips_played) if chips_played else "none") + ".")
+    played = [f"{t['name']}: {CHIP_NAMES.get(t['chip'], t['chip'])}" for t in teams if t["chip"]]
+    lines.append("Chips played: " + ("; ".join(played) if played else "none") + ".")
+    moves = [f"{t['name']}: " + ", ".join(f"{names(m['element_out'])} → {names(m['element_in'])}" for m in t["moves"])
+             + (f" (-{t['cost']})" if t["cost"] else "") for t in teams if t["moves"]]
     if moves:
         lines.append("Rivals' transfers: " + "; ".join(moves) + ".")
-    if standings.get("has_next"):
-        lines.append(doc.Tone(f"Only the top {len(results)} are shown.", "muted"))
+    if len(standings["results"]) > MAX_RIVALS or standings.get("has_next"):
+        lines.append(doc.Tone(f"Only the top {MAX_RIVALS} by today's standings are shown.", "muted"))
     blocks += [doc.Para(line) for line in lines]
     blocks.append(doc.Table(["#", "Team", "GW", "Total", "Captain"], rows, right={2, 3}, slack_rows=slack_rows))
-    return blocks, (me["rank"] if me else None), len(results)
+    return blocks, (me["rank"] if me else None), len(teams)
 
 
 CHIP_NAMES = {"wildcard": "Wildcard", "freehit": "Free Hit", "bboost": "Bench Boost", "3xc": "Triple Captain"}
