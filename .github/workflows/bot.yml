@@ -11,7 +11,7 @@ on:
       job:
         description: Which job (cron-job.org sends tick)
         type: choice
-        options: [dry-run, tick, preview, main, final, check-write, explain, slack-check, slack-command]
+        options: [dry-run, tick, preview, main, final, check-write, explain, slack-check, slack-command, review]
         default: dry-run
       player:
         description: For explain, the player's name as FPL shows it (e.g. Haaland)
@@ -21,8 +21,12 @@ on:
         description: For slack-command, what you typed after /fpl (the Slack Worker sends it)
         type: string
         default: ""
+      gameweek:
+        description: For review, which gameweek (blank for the latest FPL has confirmed)
+        type: string
+        default: ""
       email:
-        description: Send the dry run (Slack, and email while EMAIL_TOO is true)
+        description: Send the dry run or review (Slack, and email while EMAIL_TOO is true); else it's only in the log
         type: boolean
         default: true
   push:
@@ -74,9 +78,10 @@ jobs:
           SLACK_CHANNEL: ${{ secrets.SLACK_CHANNEL }}
       - name: Bot
         if: inputs.job != 'explain' && inputs.job != 'slack-check' && inputs.job != 'slack-command'
-        run: bash hosted_run.sh --job "${JOB:-dry-run}" ${{ (github.event_name == 'workflow_dispatch' && inputs.job == 'dry-run' && inputs.email) && '--email' || '' }}
+        run: bash hosted_run.sh --job "${JOB:-dry-run}" ${{ (github.event_name == 'workflow_dispatch' && (inputs.job == 'dry-run' || inputs.job == 'review') && inputs.email) && '--email' || '' }}
         env:
           JOB: ${{ inputs.job }}
+          REVIEW_GW: ${{ inputs.gameweek }}
           BOT_LIVE: ${{ vars.BOT_LIVE }}
           FPL_TEAM_ID: ${{ vars.FPL_TEAM_ID }}
           FPL_REFRESH_TOKEN: ${{ secrets.FPL_REFRESH_TOKEN }}

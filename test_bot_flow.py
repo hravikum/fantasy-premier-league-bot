@@ -1,5 +1,6 @@
 """The gameweek jobs end to end against a fake FPL (real archive data, a fake server that applies
 the bot's requests the way FPL would and serves my-team back).  python3 -m pytest test_bot_flow.py"""
+import json
 from collections import Counter
 
 import pandas as pd
@@ -15,6 +16,7 @@ import executor
 import mailer
 import news
 import optimizer
+import review
 import schedule
 import slack
 
@@ -103,8 +105,9 @@ def fpl(tmp_path, monkeypatch):
                             or True)
         for module, name in [(schedule, "STATE"), (approvals, "STATE"), (executor, "LOG"), (bot, "FLAGS"),
                              (news, "WATCHLIST"), (news, "NEWS"), (news, "HEARTBEAT"),
-                             (chips, "PLAN")]:
+                             (chips, "PLAN"), (review, "LINEUPS"), (review, "REVIEWS")]:
             monkeypatch.setattr(module, name, tmp_path / f"{module.__name__}-{name}")
+        monkeypatch.setattr(review, "WRITES", executor.LOG)
         return server
     return setup
 
@@ -152,6 +155,25 @@ def test_preview_main_final(fpl):
     assert len(server.posts) == sent                     # lineup already right: nothing sent, no email
     assert bot.tick(deadline - pd.Timedelta(minutes=20), live=True) is None
     assert set(schedule.load(GW, deadline)["done"]) == {"preview", "main", "final"}
+
+
+def test_the_main_run_keeps_its_lineup_and_a_quiet_tick_runs_the_review(fpl, monkeypatch):
+    server = fpl()
+    deadline = server.deadlines[GW]
+    assert bot.tick(deadline - pd.Timedelta(hours=2), live=True) == "main"
+    kept = json.loads(review.LINEUPS.read_text())[str(GW)]
+    lineup = [p for path, p in server.posts if path == "my-team/99/"][-1]
+    assert kept["picks"] == lineup["picks"] and kept["source"] == "main run"
+    assert set(kept["xp"]) >= {str(p["element"]) for p in lineup["picks"]} and kept["decisions"] == []
+    reviewed = []
+    monkeypatch.setenv("FPL_TEAM_ID", "99")
+    monkeypatch.setattr(review, "due", lambda events: GW - 1)
+    monkeypatch.setattr(review, "run", lambda gw, entry: reviewed.append((gw, entry)) or True)
+    assert bot.tick(deadline - pd.Timedelta(hours=40), live=True) == "review"     # nothing else due
+    assert reviewed == [(GW - 1, 99)]
+    monkeypatch.setattr(bot, "preview", lambda ctx: True)
+    assert bot.tick(deadline - pd.Timedelta(hours=24), live=True) == "preview"     # a deadline job comes first
+    assert reviewed == [(GW - 1, 99)]
 
 
 def change_captain(server):

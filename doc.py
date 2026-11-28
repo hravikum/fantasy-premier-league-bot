@@ -220,7 +220,8 @@ DOTS = {"good": "🟢", "bad": "🔴", "warn": "⚠️", "info": "🔵"}    # wh
 STYLES = {"good": "primary", "bad": "danger"}               # a real button's colour, by tone
 NUMBER = re.compile(r"^[£+-]?\d+(\.\d+)?$")         # a table column of these is aligned right
 ICONS = (("Transfers", "🔁"), ("Fixtures", "📅"), ("Starting XI", "👕"), ("Lineup", "👕"), ("Plan", "🗓️"),
-         ("Chips", "🎟️"), ("Top projections", "📈"))
+         ("Chips", "🎟️"), ("Top projections", "📈"), ("You vs the bot", "🆚"), ("The model", "📐"),
+         ("Mini-league", "🏆"), ("Hindsight", "🔍"), ("Season", "📊"))
 
 
 def text_of(part):

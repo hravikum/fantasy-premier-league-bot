@@ -40,6 +40,7 @@ import news
 import optimizer
 import overrides
 import recommend
+import review
 import schedule
 import slack
 import team as team_module
@@ -377,11 +378,13 @@ def main_run(ctx, job="main", record=None):
         except Exception as problem:
             problems = [f"couldn't read my-team back to check ({type(problem).__name__}: {problem})"]
     success = ok and not problems
+    lineup = next((a for a in actions if a.kind == "lineup"), None)
     if success and record is not None:
         record["left_by_main"] = {"picks": team_key(after),
                                   "chances": {str(i): chance(ctx.players, i) for i in ctx.team.squad}}
         record["captain"] = yours.captain           # your pick, which the final check keeps
-    lineup = next((a for a in actions if a.kind == "lineup"), None)
+    if success:
+        keep_for_review(ctx, actions, lineup, chip, decisions, answers, yours, job)
     blocks = []
     if not success:
         failed = next((a.outcome for a in actions if a.outcome.startswith(("FAILED", "not sent"))), "; ".join(problems))
@@ -408,6 +411,32 @@ def main_run(ctx, job="main", record=None):
     else:
         email(True, f"ACTION NEEDED: GW{ctx.gw} {job} run couldn't make its changes", msg)
     return success, chip
+
+
+def keep_for_review(ctx, actions, lineup, chip, decisions, answers, yours, job):
+    """What the gameweek's review needs from this run (review.remember): the lineup the bot set (or the
+    team as it stands, when your Wildcard or Free Hit leaves it to you), its projections, the transfers
+    it made, your answers and your overrides. Never fails the run."""
+    try:
+        picks = lineup.payload["picks"] if lineup else ctx.team.picks
+        made = [a for a in actions if a.kind == "transfers" and a.mode in ("auto", "approved")]
+        transfers = [[t["element_out"], t["element_in"]] for a in made for t in a.payload["transfers"]]
+        squad = [p["element"] for p in picks]
+        xp = {str(e): round(float(ctx.per_gw.loc[e, ctx.gw]), 2) for e in squad + [o for o, _ in transfers]
+              if e in ctx.per_gw.index}
+        hit = next((d for d in decisions if d["kind"] == "transfers" and answers.get(d["n"]) == "yes"), None)
+        hits = hit["hits"] if hit and any("hit" in a.why for a in made) else 0
+        said = {"keep": sorted(yours.keep), "ban": sorted(yours.ban), "skip": sorted(list(s) for s in yours.skip),
+                "captain": yours.captain}
+        if yours.captain:                   # the bot's own pick, for the review to compare with yours
+            own = optimizer.plan(ctx.per_gw[[ctx.gw]], ctx.players, squad, ctx.team.bank, 0, ctx.team.sell_prices,
+                                 optimizer.Settings(frozen_gws={ctx.gw}, bench_boost_gw=ctx.gw if chip == "bboost" else None,
+                                                    triple_captain_gw=ctx.gw if chip == "3xc" else None))
+            said["bot_captain"] = own.weeks[0].captain if own.weeks else None
+        review.remember(ctx.gw, picks, chip, source=f"{job} run", xp=xp, transfers=transfers, hits=hits,
+                        decisions=[{**d, "answer": answers.get(d["n"])} for d in decisions], overrides=said)
+    except Exception as problem:
+        print(f"(couldn't keep this run for the review: {type(problem).__name__}: {problem})")
 
 
 def chip_weeks(ctx, decisions, answers, notes):
@@ -524,6 +553,11 @@ def final_check(ctx, record):
     if ctx.live and action.outcome == "sent":
         problems = executor.verify([action], data.get(f"my-team/{ctx.team.entry}/", token=ctx.token))
     success = ok and not problems
+    if success:                             # the bot's own late fix: the lineup the review compares with
+        try:
+            review.remember(ctx.gw, action.payload["picks"], chip, source="final check")
+        except Exception as problem:
+            print(f"(couldn't keep the final check's lineup for the review: {type(problem).__name__}: {problem})")
     blocks = [] if success else [doc.Callout("Action needed", [
         action.outcome if action.outcome.startswith(("FAILED", "not sent")) else "; ".join(problems),
         doc.Tone(f"Make this change yourself on the FPL site before {ctx.local_deadline} ET.", bold=True)], "bad")]
@@ -572,6 +606,12 @@ def tick(now, live):
     job = schedule.due(record, deadline, now)
     if job is None:
         schedule.save(record)
+        done = review.due(events)            # the last gameweek's review, once FPL has confirmed its points
+        team_id = os.getenv("FPL_TEAM_ID")
+        if done is not None and team_id:
+            print(f"Running the review for GW{done}.")
+            review.run(done, int(team_id))
+            return "review"
         print(f"Nothing due. GW{gw} deadline {deadline.tz_convert(EASTERN):%a %d %b %H:%M} ET, "
               f"{(deadline - now).total_seconds() / 3600:.1f} h away.")
         return None
@@ -608,9 +648,9 @@ def near_deadline(now):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--job", choices=["dry-run", "tick", "preview", "main", "final", "check-write"],
+    parser.add_argument("--job", choices=["dry-run", "tick", "preview", "main", "final", "check-write", "review"],
                         default="dry-run")
-    parser.add_argument("--email", action="store_true", help="email the dry run")
+    parser.add_argument("--email", action="store_true", help="send the dry run or review (else just print it)")
     args = parser.parse_args()
     load_dotenv(Path(__file__).with_name(".env"))
     live = os.getenv("BOT_LIVE", "").strip().lower() == "true"
@@ -620,6 +660,14 @@ def main():
     try:
         if args.job == "tick":
             tick(now, live)
+            return
+        if args.job == "review":   # a gameweek's review (REVIEW_GW, else the latest), printed (sent with --email)
+            events = pd.DataFrame(data.get("bootstrap-static/")["events"])
+            gw = int(os.environ["REVIEW_GW"]) if os.getenv("REVIEW_GW", "").strip() else review.latest(events)
+            if gw is None:
+                raise SystemExit(f"No gameweek to review yet (they start at GW{review.FIRST_GW}).")
+            if not review.run(gw, int(os.environ["FPL_TEAM_ID"]), send=args.email):
+                raise SystemExit(f"The GW{gw} review couldn't be made (see above).")
             return
         ctx = load_context(now, live, need_login=args.job in ("main", "final"))
         if ctx is None:

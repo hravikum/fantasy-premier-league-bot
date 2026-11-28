@@ -17,6 +17,7 @@ FPL's next deadline and runs whichever job is due (`schedule.py`), once per game
 | a few hours before | **Claude news check** | A scheduled Claude task reads press conferences and predicted lineups for the watchlist players, and notes start chances that FPL's flags don't show yet. It runs every 6 hours and works only near a deadline. |
 | ~2 h before | **main run** | Logs in, applies the news and your reply, makes the changes, reads them back from FPL, and emails what it did. |
 | ~45 min before | **final check** | Re-checks injury news and fixes the lineup and captain if needed. If the main run failed, it runs it instead. Emails only if it changed or failed something. **If you changed your team on FPL after the main run** (captain, bench, a transfer), it leaves it as you set it and only warns you (ACTION NEEDED) if a starter's chance of playing has dropped since the main run. |
+| once FPL confirms the gameweek's points | **review** | Posts how the gameweek went: you vs. the bot, the model, The Slash, your decisions in hindsight and the season so far (below). Public data only. |
 
 A failed main run is retried at the next tick, and the final check is a last retry.
 
@@ -55,15 +56,51 @@ A failed main run is retried at the next tick, and the final check is a last ret
   ruled out.
 - **Chips (`chips.py`)**: each remaining chip's value in every week up to its expiry (first set:
   GW19 deadline, Sat 2 Jan), spread one chip a week for the most points.
+  - Bench Boost, Triple Captain and Wildcard are valued by re-making the 6-week plan with the chip
+    in that week, so the value includes setting the team up for it: a bench that plays, a captain
+    worth tripling, the squad a Wildcard builds. Weeks past the 6-week plan use the planned bench
+    and captain, and the Wildcard isn't valued until its week comes into the plan.
+  - Free Hit: the best one-week squad, minus the plan's team that week.
+  - A Wildcard followed by a Bench Boost is valued together (the Wildcard builds the bench).
   - A chip is proposed when its best week is the coming one and it's clearly worth it:
     Triple Captain 7+, Bench Boost 15+, Free Hit 10+, Wildcard 12+ expected points.
   - Near expiry it's use it or lose it.
+  - **Planning around a chip week.** When the spread puts Bench Boost or Triple Captain in a later
+    week and setting up for it would change this week's transfers, the preview asks once: "Plan
+    around Bench Boost in GW18?", with what it changes this week. After a yes, the plan counts the
+    chip in that week, so the free transfers until then set it up (no hits without your yes). The
+    chip itself still gets its own Yes in its week. A no isn't asked again for that week; no answer
+    asks again next time. A better week (2+ points more) is offered as a move.
+    Saved in `state/chip_plan.json`.
 - **Hybrid policy (`executor.py`)**:
   - Automatic: lineup, bench order, captain and vice-captain, and free transfers that clear the
     bar.
   - Asks first: hits and chips, each as its own decision.
   - A chip you play yourself on the site is kept. With your Wildcard or Free Hit active, the bot
     leaves transfers and lineup to you.
+
+## After each gameweek: the review (`review.py`)
+
+Once FPL confirms a gameweek's points (bonus in), the next tick posts a review, from GW12 (the
+first live gameweek). It uses public data only, so it needs no login.
+
+- **You vs the bot:** your team as it played against the lineup the bot set at its main run (or
+  its final check, if that changed it). Both are scored the way FPL does: automatic subs in bench
+  order keeping a valid formation, the vice-captain if the captain didn't play, hits taken off.
+  It shows what your changes gained or cost, and why: who counted, the armband, the subs.
+- **The model:** what the bot projected for its lineup against what it scored, the biggest
+  surprises, and each transfer it made (who came in against who went). From GW13; GW12's
+  projections weren't kept.
+- **The Slash:** the standings with each team's rank change, gameweek score and captain, plus
+  the chips your rivals played and their transfers this gameweek.
+- **Hindsight:** your answers to hits, chips and chip weeks, and your overrides, against what
+  happened (e.g. "Bench Boost: you said no; it would have added 9").
+- **Season so far:** your changes vs the bot's lineups in total, the model's projected vs.
+  scored average, and your place in The Slash week by week.
+
+The main run keeps the bot's lineup, projections, your answers and overrides in
+`state/lineups.json`; GW12's lineup comes from the write log. Reviews done are in
+`state/reviews.json`. A failed review is retried at each tick, and after 6 tries it says so once.
 
 ## Safety
 
@@ -222,13 +259,14 @@ only, delete the two Slack secrets.
 | `preview`, `main`, `final` | Runs that job now; respects `BOT_LIVE`; doesn't touch the schedule |
 | `check-write` | The no-op write check |
 | `explain` (with a player name) | Why the model rates him as it does, and what he'd add to your team |
+| `review` (gameweek optional) | That gameweek's review (blank: the latest FPL has confirmed): in the run's log, or sent too with "Send" ticked |
 
 **Locally (read-only):**
 
 ```
 python3 recommend.py --team 1234567        # the report from public data
 python3 explain.py Haaland --team 1234567  # why the model rates a player as it does, and his value to your team
-python3 -m pytest -q                       # 100 tests, including preview → main → final against a fake FPL
+python3 -m pytest -q                       # 111 tests, including preview → main → final against a fake FPL
 python3 backtest.py                        # projections vs. past gameweeks
 ```
 
