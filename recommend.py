@@ -33,9 +33,12 @@ class Analysis:
     chip_table: pd.DataFrame
     chip_plan: dict               # chip -> gameweek, the best spread
     chip_proposal: str | None     # chip to ask about this week
-    wildcard_gain: float
+    chip_value: float             # what the proposed chip is worth this week
     sold: dict = None             # player id -> gameweeks he's ruled out: sold now under the rule-out rule
     kept: dict = None             # player id -> why a ruled-out player stays
+    chip_pairs: dict = None       # (Wildcard week, Bench Boost week) -> value together
+    unprepared: pd.DataFrame = None   # Bench Boost / Triple Captain values without setting up for them
+    agreed: dict = None           # chip -> gameweek you agreed to plan around
 
 
 class ThisWeek(NamedTuple):
@@ -128,17 +131,56 @@ def plan_this_week(per_gw, players, team, gw, settings=optimizer.Settings()):
                     sold, kept)
 
 
-def analyse(per_gw, players, team, horizon_gws):
-    """per_gw: projections up to the chips' expiry (at least the horizon). The plan uses the horizon."""
+def analyse(per_gw, players, team, horizon_gws, agreed=None):
+    """per_gw: projections up to the chips' expiry (at least the horizon). The plan uses the horizon.
+    agreed: {chip: gameweek} you agreed to plan around (chips.load_plan): the plan sets them up."""
     gw = horizon_gws[0]
+    agreed = agreed or {}
     plan_xp = per_gw[horizon_gws]
-    base, wait, gain, held, sold, kept = plan_this_week(plan_xp, players, team, gw)
+    base, wait, gain, held, sold, kept = plan_this_week(plan_xp, players, team, gw,
+                                                        chip_planner.with_plan(optimizer.Settings(), agreed, gw))
     chips, expires = team.chips_available(gw)
-    usable = [c for c in chips if c != "wildcard"]
-    table = chip_planner.values(per_gw, players, team, base, usable, expires) if usable else pd.DataFrame()
-    wild = chip_planner.wildcard_gain(plan_xp, players, team, base, gw) if "wildcard" in chips else float("nan")
-    proposal, spread = chip_planner.propose(table, chips, gw, expires, wild)
-    return Analysis(base, wait, gain, held, chips, expires, table, spread, proposal, wild, sold, kept)
+    found = chip_planner.values(per_gw, players, team, chips, expires, horizon_gws) if chips else None
+    table = found.table if found else pd.DataFrame()
+    pairs = found.pairs if found else {}
+    proposal, spread = chip_planner.propose(table, chips, gw, expires, pairs, agreed)
+    value = chip_planner.value_now(table, spread, proposal, gw, pairs) if proposal else float("nan")
+    return Analysis(base, wait, gain, held, chips, expires, table, spread, proposal, value, sold, kept,
+                    chip_pairs=pairs, unprepared=found.unprepared if found else pd.DataFrame(), agreed=agreed)
+
+
+def chip_offers(analysis, plan_xp, players, team, gw, week, agreed, declined, settings):
+    """The chip weeks to ask about planning around (your choice, Nov 27): Bench Boost or Triple Captain
+    in a later week of the spread, when setting up for it would change this week's transfers (else it
+    can wait). week: what the main run would do this week without it. settings: the main run's (no hits).
+    Not offered: a week you said no to, or a move of a week you agreed to by less than chips.MOVE_BY.
+    Returns decisions for the preview: {kind: "commit", chip, gw, from, text}."""
+    by_id = players.set_index("id")
+    moves = lambda w: sorted(zip(w.transfers_out, w.transfers_in))
+    said = lambda w: ", ".join(f"{by_id.loc[o, 'web_name']} → {by_id.loc[i, 'web_name']}"
+                               for o, i in moves(w)) or "no transfers"
+    offers = []
+    for chip in chip_planner.PLANNED:
+        target, current = analysis.chip_plan.get(chip), agreed.get(chip)
+        if target is None or target <= gw or target not in plan_xp.columns or target == current \
+                or (chip, target) in declined:
+            continue
+        table = analysis.chip_table
+        if current is not None and table.loc[target, chip] - table.loc[current, chip] < chip_planner.MOVE_BY:
+            continue
+        prepared = plan_this_week(plan_xp, players, team, gw,
+                                  chip_planner.with_plan(settings, {**agreed, chip: target}, gw)).base.weeks[0]
+        if moves(prepared) == moves(week):
+            continue
+        name = chip_planner.NAMES[chip]
+        plain = analysis.unprepared.loc[target, chip] if not analysis.unprepared.empty else float("nan")
+        ask = (f"Move the {name} plan from GW{current} to GW{target}?" if current is not None
+               else f"Plan around {name} in GW{target}?")
+        offers.append({"kind": "commit", "chip": chip, "gw": int(target), "from": current, "text": (
+            f"{ask} Setting the team up for it makes it worth about {table.loc[target, chip]:+.1f} expected points "
+            f"(about {plain:+.1f} as the team stands). This week that means {said(prepared)} instead of "
+            f"{said(week)}. You'll still be asked to play it in GW{target}.")})
+    return offers
 
 
 def fixture_counts(fixtures, teams, gws):
@@ -220,8 +262,8 @@ def report(analysis, per_gw, pf, players, fixtures, teams, team, horizon_gws):
                             slack=lines + [["_Re-planned every run, so later weeks can change._"]]))
     if analysis.chips:
         blocks += chip_planner.describe(analysis.chip_table, analysis.chip_plan, analysis.chip_proposal,
-                                        analysis.wildcard_gain,
-                                        left=f"Left this half: {chips_left} (they expire after GW{analysis.expires}).")
+                                        left=f"Left this half: {chips_left} (they expire after GW{analysis.expires}).",
+                                        agreed=analysis.agreed, pairs=analysis.chip_pairs)
     notes = fixture_counts(fixtures, teams, horizon_gws)
     if notes:
         blocks.append(doc.Para("Doubles and blanks: " + " | ".join(notes)))

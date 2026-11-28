@@ -9,6 +9,7 @@ import approvals
 import overrides
 import auth
 import bot
+import chips
 import data
 import executor
 import mailer
@@ -101,7 +102,8 @@ def fpl(tmp_path, monkeypatch):
                             server.emails.append((subject, body, html)) or server.slack.append((slack_posts, urgent))
                             or True)
         for module, name in [(schedule, "STATE"), (approvals, "STATE"), (executor, "LOG"), (bot, "FLAGS"),
-                             (news, "WATCHLIST"), (news, "NEWS"), (news, "HEARTBEAT")]:
+                             (news, "WATCHLIST"), (news, "NEWS"), (news, "HEARTBEAT"),
+                             (chips, "PLAN")]:
             monkeypatch.setattr(module, name, tmp_path / f"{module.__name__}-{name}")
         return server
     return setup
@@ -235,6 +237,28 @@ def test_no_to_the_hit_yes_to_the_chip(fpl):
     assert schedule.load(GW, deadline)["chip"] == "bboost"
     body = server.emails[-1][1]
     assert "1. Take 1 hit: you said no" in body and "2. Play Bench Boost: you said yes" in body
+
+
+def test_your_answer_to_a_chip_week_is_saved_and_the_plan_sets_it_up(fpl, monkeypatch):
+    """Yes to "plan around Bench Boost in GW10?": saved, and the main run's plan counts the chip in
+    GW10 (it isn't played now). No: not asked again for that week."""
+    server = fpl(reply={1: "yes", 2: "no"})
+    deadline = server.deadlines[GW]
+    approvals.save({"gw": GW, "code": "fpl-000000", "created": (deadline - pd.Timedelta(hours=24)).isoformat(),
+                    "decisions": [
+                        {"n": 1, "kind": "commit", "chip": "bboost", "gw": GW + 3, "from": None, "text": "Plan around BB"},
+                        {"n": 2, "kind": "commit", "chip": "3xc", "gw": GW + 2, "from": None, "text": "Plan around TC"}]})
+    seen = []
+    real = bot.recommend.plan_this_week
+    monkeypatch.setattr(bot.recommend, "plan_this_week",
+                        lambda *a, **k: seen.append(a[4] if len(a) > 4 else k.get("settings")) or real(*a, **k))
+    assert bot.tick(deadline - pd.Timedelta(hours=2), live=True) == "main"
+    import team as team_module
+    mine = team_module.Team(99, "x", [], 0, 1, {}, chips_used=[("wildcard", 2), ("freehit", 4)])
+    assert chips.load_plan(mine, GW) == ({"bboost": GW + 3}, {("3xc", GW + 2)})
+    assert seen and seen[-1].bench_boost_gw == GW + 3 and seen[-1].triple_captain_gw is None
+    assert all(p["chip"] is None for path, p in server.posts if path == "my-team/99/")      # not played now
+    assert f"sets the team up for Bench Boost in GW{GW + 3}" in server.emails[-1][1]
 
 
 def test_a_tap_in_slack_counts_and_the_main_run_closes_the_buttons(fpl, monkeypatch):

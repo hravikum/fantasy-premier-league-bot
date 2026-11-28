@@ -63,6 +63,7 @@ class Plan:
     weeks: list
     objective: float
     status: str
+    banked: int = 0                # free transfers left going into the week after the horizon
 
 
 class _Vars:
@@ -234,7 +235,7 @@ def plan(xp, players, squad, bank, free_transfers, sell_prices=None, settings=Se
             gw=gw, transfers_in=ins, transfers_out=outs,
             hits=int(sol[paid[t]]), free_transfers=int(sol[ft[t]]), bank=round(float(money_path[t]), 1),
             xi=xi, bench=[int(i) for i in bench], captain=int(captain), vice_captain=int(vice), xp=round(float(team_xp), 2)))
-    return Plan(weeks, -result.fun, result.message)
+    return Plan(weeks, -result.fun, result.message, int(sol[ft[T]]))
 
 
 def _pair_by_position(outs, ins, pos_of):

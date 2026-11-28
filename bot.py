@@ -173,7 +173,8 @@ def write_watchlist(ctx, plan):
 
 
 def dry_run(ctx, send_email):
-    analysis = recommend.analyse(ctx.per_gw, ctx.players, ctx.team, ctx.horizon_gws)
+    agreed, _ = chips.load_plan(ctx.team, ctx.gw)
+    analysis = recommend.analyse(ctx.per_gw, ctx.players, ctx.team, ctx.horizon_gws, agreed)
     write_watchlist(ctx, analysis.base)       # so the news check follows the current plan
     actions = executor.decide(ctx.team, analysis.base.weeks[0], analysis.wait.weeks[0], analysis.gain, ctx.players,
                               sold=analysis.sold)
@@ -188,7 +189,8 @@ def dry_run(ctx, send_email):
 
 
 def preview(ctx):
-    a = recommend.analyse(ctx.per_gw, ctx.players, ctx.team, ctx.horizon_gws)
+    agreed, declined = chips.load_plan(ctx.team, ctx.gw)
+    a = recommend.analyse(ctx.per_gw, ctx.players, ctx.team, ctx.horizon_gws, agreed)
     first = a.base.weeks[0]
     name = ctx.players.set_index("id")["web_name"]
     decisions = []
@@ -198,20 +200,23 @@ def preview(ctx):
                           "text": f"Take {first.hits} hit{'s' if first.hits > 1 else ''} (-{4 * first.hits}) "
                                   f"for these transfers: {moves}"})
     if a.chip_proposal:
-        value = a.wildcard_gain if a.chip_proposal == "wildcard" else a.chip_table.loc[ctx.gw, a.chip_proposal]
+        planned = " as planned with you" if agreed.get(a.chip_proposal) == ctx.gw else ""
         decisions.append({"kind": "chip", "chip": a.chip_proposal,
-                          "text": f"Play {chips.NAMES[a.chip_proposal]} this week (about {value:+.1f} expected points)"})
-    for n, decision in enumerate(decisions, start=1):
-        decision["n"] = n
-    # What the main run does if you say no to everything: no hits, no chip.
+                          "text": f"Play {chips.NAMES[a.chip_proposal]} this week{planned} "
+                                  f"(about {a.chip_value:+.1f} expected points)"})
+    # What the main run does if you say no to everything: no hits, no chip, no new chip plan.
+    no_hits = optimizer.Settings(max_hits=0)
     week = first
     if first.hits:
         base, wait, gain, _, sold, _ = recommend.plan_this_week(ctx.plan_xp, ctx.players, ctx.team, ctx.gw,
-                                                                optimizer.Settings(max_hits=0))
+                                                                chips.with_plan(no_hits, agreed, ctx.gw))
         week = base.weeks[0]
         default = executor.decide(ctx.team, week, wait.weeks[0], gain, ctx.players, sold=sold)
     else:
         default = executor.decide(ctx.team, first, a.wait.weeks[0], a.gain, ctx.players, sold=a.sold)
+    decisions += recommend.chip_offers(a, ctx.plan_xp, ctx.players, ctx.team, ctx.gw, week, agreed, declined, no_hits)
+    for n, decision in enumerate(decisions, start=1):
+        decision["n"] = n
     # A code always, for your answers and overrides in Slack; saved with the message's ts once posted.
     code = approvals.new_code()
     proposal = {"gw": ctx.gw, "code": code, "created": ctx.now.isoformat(), "decisions": decisions}
@@ -266,23 +271,26 @@ def override_callout(ctx, code, default, week):
     return doc.Callout("Change the bot's moves (optional)", lines, "info", slack_only=True)
 
 
-def approved_actions(ctx, approved, notes, yours=overrides.Overrides()):
-    """The actions for this week given the decisions you said yes to ({kind: decision}) and your
-    overrides, or (None, None) to fall back to the no-approval plan."""
+def approved_actions(ctx, approved, notes, yours=overrides.Overrides(), agreed=None):
+    """The actions for this week given the decisions you said yes to ({kind: decision}), your
+    overrides and the chip weeks you agreed to plan around, or (None, None) to fall back to the
+    no-approval plan."""
     if not approved:
         return None, None
     team, players, gw = ctx.team, ctx.players, ctx.gw
+    agreed = agreed or {}
     available, _ = team.chips_available(gw)
     chip = approved["chip"]["chip"] if "chip" in approved and approved["chip"]["chip"] in available else None
-    settings = overrides.settings(optimizer.Settings(max_hits=0, triple_captain_gw=gw if chip == "3xc" else None,
-                                                     bench_boost_gw=gw if chip == "bboost" else None), yours, gw)
+    settings = chips.with_plan(overrides.settings(optimizer.Settings(
+        max_hits=0, triple_captain_gw=gw if chip == "3xc" else None,
+        bench_boost_gw=gw if chip == "bboost" else None), yours, gw), agreed, gw)
     args = (ctx.plan_xp, players, team.squad, team.bank, team.free_transfers, team.sell_prices)
     if chip in TRANSFER_CHIPS:
         if "transfers" in approved:
             notes.append(f"The {chips.NAMES[chip]} replaces the transfers you approved: it re-picks the squad.")
         xp = ctx.per_gw[[gw]] if chip == "freehit" else ctx.plan_xp
-        plan = optimizer.plan(xp, *args[1:], overrides.settings(
-            optimizer.Settings(wildcard_gw=gw, ft_value=0 if chip == "freehit" else 1.5), yours, gw))
+        plan = optimizer.plan(xp, *args[1:], chips.with_plan(overrides.settings(
+            optimizer.Settings(wildcard_gw=gw, ft_value=0 if chip == "freehit" else 1.5), yours, gw), agreed, gw))
         week = plan.weeks[0]
         actions = []
         if week.transfers_in:
@@ -334,20 +342,21 @@ def main_run(ctx, job="main", record=None):
     said = {"yes": "you said yes", "no": "you said no", None: "no answer, so no"}
     for d in decisions:
         notes.append(f"{d['n']}. {d['text']}: {said[answers.get(d['n'])]}.")
-    approved = {d["kind"]: d for d in decisions if answers.get(d["n"]) == "yes"}
+    agreed = chip_weeks(ctx, decisions, answers, notes)
+    approved = {d["kind"]: d for d in decisions if d["kind"] != "commit" and answers.get(d["n"]) == "yes"}
     active = ctx.team.active_chip
     if active:
         notes.append(f"You've already played {chips.NAMES.get(active, active)} this gameweek; the bot keeps it.")
         if approved.pop("chip", None):
             notes.append("So the chip you approved wasn't played: one chip a gameweek.")
-    actions, chip = approved_actions(ctx, approved, notes, yours)
+    actions, chip = approved_actions(ctx, approved, notes, yours, agreed)
     if actions is None and active in TRANSFER_CHIPS:
         notes.append("With that chip active, transfers and the lineup are left to you.")
         actions, chip = [], active
     elif actions is None:
-        settings = overrides.settings(optimizer.Settings(max_hits=0, triple_captain_gw=ctx.gw if active == "3xc" else None,
-                                                         bench_boost_gw=ctx.gw if active == "bboost" else None),
-                                      yours, ctx.gw)
+        settings = chips.with_plan(overrides.settings(optimizer.Settings(
+            max_hits=0, triple_captain_gw=ctx.gw if active == "3xc" else None,
+            bench_boost_gw=ctx.gw if active == "bboost" else None), yours, ctx.gw), agreed, ctx.gw)
         base, wait, gain, _, sold, _ = recommend.plan_this_week(ctx.plan_xp, ctx.players, ctx.team, ctx.gw, settings)
         actions = executor.decide(ctx.team, base.weeks[0], wait.weeks[0], gain, ctx.players,
                                   chip=active, chip_already_set=bool(active), sold=sold)
@@ -399,6 +408,21 @@ def main_run(ctx, job="main", record=None):
     else:
         email(True, f"ACTION NEEDED: GW{ctx.gw} {job} run couldn't make its changes", msg)
     return success, chip
+
+
+def chip_weeks(ctx, decisions, answers, notes):
+    """The chip weeks you agreed to plan around, with this preview's answers saved: a yes plans around
+    that week from now on (replacing an earlier week for the same chip), a no isn't asked again for that
+    week, and no answer asks again next time if it still matters. Returns {chip: gameweek}."""
+    agreed, declined = chips.load_plan(ctx.team, ctx.gw)
+    for d in (d for d in decisions if d["kind"] == "commit"):
+        if answers.get(d["n"]) == "yes":
+            agreed[d["chip"]] = d["gw"]
+            notes.append(f"From now on the plan sets the team up for {chips.NAMES[d['chip']]} in GW{d['gw']}.")
+        elif answers.get(d["n"]) == "no":
+            declined.add((d["chip"], d["gw"]))
+    chips.save_plan(agreed, declined)
+    return agreed
 
 
 def your_overrides(ctx, notes):

@@ -107,9 +107,46 @@ def test_chips_spread_one_a_week_and_wait_unless_worth_it():
     late = pd.DataFrame({"3xc": [5.0, 5.0], "bboost": [12.0, 8.0], "freehit": [1.0, 2.0]}, index=[18, 19])
     assert chips.propose(late, ["3xc", "bboost", "freehit"], 18, 19)[0] == "bboost"
     # a big Wildcard gain, or the last week, proposes the Wildcard
-    assert chips.propose(pd.DataFrame(), ["wildcard"], 12, 19, wild=14.0)[0] == "wildcard"
-    assert chips.propose(pd.DataFrame(), ["wildcard"], 19, 19, wild=1.0)[0] == "wildcard"
-    assert chips.propose(pd.DataFrame(), ["wildcard"], 12, 19, wild=5.0)[0] is None
+    wild = lambda value, gw: pd.DataFrame({"wildcard": [value]}, index=[gw])
+    assert chips.propose(wild(14.0, 12), ["wildcard"], 12, 19)[0] == "wildcard"
+    assert chips.propose(wild(1.0, 19), ["wildcard"], 19, 19)[0] == "wildcard"
+    assert chips.propose(wild(5.0, 12), ["wildcard"], 12, 19)[0] is None
+
+
+def test_wildcard_is_in_the_spread_and_pairs_with_bench_boost():
+    """The Wildcard takes its own week like the other chips, so two can't land in one week, and a
+    Wildcard the week before a Bench Boost is valued together (it builds the bench)."""
+    table = pd.DataFrame({"wildcard": [9.0, 8.0, 7.0, float("nan")], "bboost": [13.0, 13.5, 14.0, 14.0],
+                          "3xc": [6.0, 6.5, 6.0, 7.5]}, index=[20, 21, 22, 23])
+    apart = chips.assign(table)
+    assert apart == {"wildcard": 20, "bboost": 22, "3xc": 23}       # NaN (past the plan) is never picked
+    pairs = {(20, 21): 9.0 + 19.0, (21, 22): 8.0 + 15.0}
+    together = chips.assign(table, pairs)
+    assert together["wildcard"] == 20 and together["bboost"] == 21 and together["3xc"] == 23
+    assert chips.score(table, together, pairs) > chips.score(table, apart, pairs)
+    # the Wildcard's worth this week counts the Bench Boost it sets up: 28 - 13.5 = 14.5, over the bar
+    assert chips.value_now(table, together, "wildcard", 20, pairs) == 14.5
+    assert chips.propose(table, ["wildcard", "bboost", "3xc"], 20, 38, pairs)[0] == "wildcard"
+    assert chips.propose(table, ["wildcard", "bboost", "3xc"], 20, 38)[0] is None    # 9 alone isn't enough
+
+
+def test_a_chip_week_you_agreed_to_is_kept_and_asked_about_when_it_comes(tmp_path, monkeypatch):
+    import team
+    monkeypatch.setattr(chips, "PLAN", tmp_path / "chip_plan.json")
+    table = pd.DataFrame({"3xc": [5.0, 6.0, 9.0], "bboost": [12.0, 11.0, 16.0]}, index=[16, 17, 18])
+    assert chips.assign(table)["bboost"] == 18
+    assert chips.assign(table, fixed={"bboost": 17}) == {"bboost": 17, "3xc": 18}
+    assert chips.propose(table.loc[[17, 18]], ["3xc", "bboost"], 17, 19, agreed={"bboost": 17})[0] == "bboost"
+    # what's saved drops weeks that have passed and chips that are gone
+    chips.save_plan({"bboost": 18, "3xc": 16}, {("bboost", 17), ("3xc", 12)})
+    mine = team.Team(1, "x", [], 0, 1, {}, chips_used=[("wildcard", 3), ("3xc", 14)])
+    assert chips.load_plan(mine, 15) == ({"bboost": 18}, {("bboost", 17)})
+    assert chips.load_plan(mine, 19) == ({}, set())
+    # the plan counts an agreed chip only in a later week: this week's is played only with its own yes
+    import optimizer
+    assert chips.with_plan(optimizer.Settings(), {"bboost": 18}, 15).bench_boost_gw == 18
+    assert chips.with_plan(optimizer.Settings(), {"bboost": 15}, 15).bench_boost_gw is None
+    assert chips.with_plan(optimizer.Settings(bench_boost_gw=15), {"bboost": 18}, 15).bench_boost_gw == 15
 
 
 def test_news_is_used_only_when_fresh_and_for_this_gameweek(tmp_path, monkeypatch):
@@ -128,3 +165,55 @@ def test_news_is_used_only_when_fresh_and_for_this_gameweek(tmp_path, monkeypatc
     assert news.load(12, now + 30 * H)[0] == {}                          # too old
     news.HEARTBEAT.write_text(json.dumps({"last_run": (now - 40 * H).isoformat()}))
     assert "may have stopped" in "\n".join(news.load(12, now)[1])
+
+
+def test_chip_values_count_setting_the_team_up_for_them():
+    """Bench Boost re-planned with the chip in its week is worth at least the bench as it stands: with
+    money and free transfers the plan can buy a bench that plays. Past the plan, the bench as it stands."""
+    import team
+    from test_optimizer import GWS, cheapest_squad, make_pool
+    players, xp = make_pool()
+    squad = cheapest_squad(players)
+    mine = team.Team(1, "x", squad, 20.0, 2, {})
+    per_gw = xp.assign(**{"13": xp[12]}).rename(columns={"13": 13})       # one week past the 3-week plan
+    found = chips.values(per_gw, players, mine, ["bboost", "3xc", "wildcard"], 19, GWS)
+    assert list(found.table.index) == GWS + [13]
+    for gw in GWS:
+        assert found.table.loc[gw, "bboost"] >= found.unprepared.loc[gw, "bboost"] - 0.05   # weekly xp is rounded to 0.01
+        assert found.table.loc[gw, "3xc"] >= found.unprepared.loc[gw, "3xc"] - 0.05
+    assert found.table.loc[12, "bboost"] > found.unprepared.loc[12, "bboost"] + 0.3   # it buys a bench that plays
+    assert found.table.loc[13, "bboost"] == found.unprepared.loc[13, "bboost"]       # past the plan: as it stands
+    assert found.table.loc[13, "wildcard"] != found.table.loc[13, "wildcard"]        # NaN: not valued yet
+    assert set(found.pairs) == {(10, 11), (10, 12), (11, 12)}
+
+
+def test_a_chip_week_is_offered_only_when_setting_up_for_it_changes_this_week():
+    """The preview asks to plan around a Bench Boost week only when it would change this week's
+    transfers, not for a week you said no to or already agreed to, and moves an agreed week only for
+    chips.MOVE_BY more."""
+    from types import SimpleNamespace
+    import optimizer
+    import recommend
+    import team
+    from test_optimizer import GWS, cheapest_squad, make_pool
+    players, xp = make_pool()
+    mine = team.Team(1, "x", cheapest_squad(players), 20.0, 2, {})
+    table = pd.DataFrame({"bboost": [10.0, 11.0, 14.0]}, index=GWS)
+    analysis = SimpleNamespace(chip_plan={"bboost": 12}, chip_table=table, unprepared=table - 2)
+    settings = optimizer.Settings(max_hits=0)
+    prepared = recommend.plan_this_week(xp, players, mine, 10, chips.with_plan(settings, {"bboost": 12}, 10)).base.weeks[0]
+    nothing = SimpleNamespace(transfers_out=[], transfers_in=[])
+    offer = lambda week, agreed={}, declined=set(): recommend.chip_offers(
+        analysis, xp, players, mine, 10, week, agreed, declined, settings)
+    assert prepared.transfers_in                    # setting it up means buying this week, unlike `nothing`
+    made = offer(nothing)
+    assert len(made) == 1 and made[0]["kind"] == "commit" and made[0]["gw"] == 12
+    assert made[0]["text"].startswith("Plan around Bench Boost in GW12?") and "instead of no transfers" in made[0]["text"]
+    assert offer(prepared) == []                    # the same moves either way: ask later, if ever
+    assert offer(nothing, declined={("bboost", 12)}) == []
+    assert offer(nothing, agreed={"bboost": 12}) == []
+    assert len(offer(nothing, agreed={"bboost": 11})) == 1           # 14 vs 11: worth moving
+    table.loc[12, "bboost"] = 12.0
+    assert offer(nothing, agreed={"bboost": 11}) == []                 # 12 vs 11: not worth asking
+    analysis.chip_plan = {"bboost": 10}             # this week: that's the chip decision itself
+    assert offer(nothing) == []
